@@ -1,0 +1,111 @@
+# STEP 2 log — @architect (2026-09-16)
+
+## Deliverable
+- `docs/architecture/ARCHITECTURE-BRIEF.md` (10 required sections + toolchain-evidence section §0
+  + appendix of claims Sprint 1 must not make).
+- Handoff appended to `docs/pipeline/HANDOFFS.md` (file created with header row).
+
+## Evidence gathered (not assumed)
+1. Re-verified the machine: `cmake` MISSING; `dotnet --list-sdks` empty (WPF not buildable);
+   FFmpeg 9.0 gyan "full" root contains only `bin/ doc/ LICENSE presets README.txt` -> NO `include/`,
+   NO `lib/` -> cannot be linked; MSVC present via VS 18 BuildTools (vswhere); no MinGW/clang.
+2. Protocol research with sources (URLs inline in the brief):
+   - Unofficial AirPlay spec - service discovery + full `_airplay._tcp` / `_raop._tcp` TXT key tables.
+   - airplay2-rs AIRPLAY_2_SPEC.md - complete TXT keys + 64-bit `features` bitfield (bit 7 =
+     SupportsAirPlayScreen, 9 = audio, 27 = legacy pairing, 30 = RAOP, 42 = screen multi-codec).
+   - UxPlay wiki "AirPlay2" - a real packet capture: GET /info -> POST /pair-setup -> /pair-verify ->
+     /fp-setup -> SETUP -> RECORD, keepalive, TEARDOWN with stream types 96 (audio) / 110 (video).
+   - pyatv protocols doc - RTSP command semantics (OPTIONS/ANNOUNCE/SETUP/RECORD/SET_PARAMETER/...).
+   - RPiPlay protocol-history note - since tvOS 10.2 device verification is mandatory and the
+     AirPlay 2 control channel is encrypted after pair-verify -> explains why Sprint 2 is the
+     pairing/FairPlay sprint, not a "nice to have".
+3. Licence check: UxPlay GPL-3.0, RPiPlay GPL-3.0 (reference only); shairport-sync is NOT simply MIT
+   (Fedora: MIT AND BSD AND GPL-3.0; Arch: GPL-2.0-only); mikebrady/alac = Apache-2.0 (LICENSE
+   verified); mDNSResponder = Apache-2.0 (LICENSE + vcpkg port page); FFmpeg LGPL by default, avoid
+   `--enable-nonfree`/fdk-aac.
+4. CI reality: `windows-latest` ships CMake 3.31.6, `VCPKG_INSTALLATION_ROOT=C:\vcpkg`, VS 2022 image
+   (runner-images Windows2025 readme) -> CI can be green while the laptop lacks CMake.
+
+## Key decisions handed downstream
+- PC = AirPlay **receiver/advertiser** (registers `_airplay._tcp` + `_raop._tcp`); browsing not needed.
+- Sprint 1 gate: advertise + answer `GET /info` (device visible in Control Center) + Win32/D3D11 window
+  with status overlay. First real frame is the **Sprint 2** gate (pairing + FairPlay + AES + decode).
+- Stack: C++20/MSVC, CMake (to install), vcpkg manifest (ffmpeg[nvcodec], mdnsresponder, openssl,
+  spdlog, catch2), own RTSP+bplist, D3D11/DXGI render, WASAPI shared audio (audio = master clock),
+  named-pipe JSON-lines IPC, Inno Setup installer, GitHub Actions CI.
+- 4K, multi-room/PTP/buffered audio, HLS, HomeKit pairing: out of v1 scope.
+
+## Revision 2026-09-16 (after @reviewer gate)
+Blocker fixed: `ci.yml` generator `"Visual Studio 18 2026"` -> `"Visual Studio 17 2022"` (the runner
+image has VS 2022 17.14 only; VS 18 v14.51 is local-only) + §3/§6.3 now name both generators and
+instruct `cmake --help` confirmation instead of memory. Advisories folded in: §2 C4/C16 pairing mode +
+PIN surface; §1.2 `pk`/`pi` generated in Sprint 1; §1.4 pairing-mode bullet + user decision D3 recorded;
+new gates 1.10 (first commit + ci.yml), 1.11 (pairing mode advertised consistently), 1.12 (persistent
+Ed25519 identity); §8 intro now states gate-order-not-calendar; §9 split into 9.1 locked decisions (D1
+Win32+D3D11, D2 4K post-1.0, D3 first frame = Sprint 2, D4 Apache-2.0) and 9.2 still-open (transient vs
+PIN, AirPlay 2 surface, non-NVIDIA hardware, installer signing); FFmpeg plan B is now the BtbN **lgpl**
+build; vcpkg clone moved to C:/dev/vcpkg with file binary cache + `--clean-after-build` (38 GB free on C:);
+R9 now lists the four real blockers verified by @deployer. Brief: 920 lines / 67,941 bytes.
+
+## Revision v3 2026-09-16 (after user decisions D5/D6 + foundry CI guards)
+- Transient pairing mask recomputed in python (not copied): bits 7,9,30,42,48 -> lower 0x40000280, upper
+  0x10400. Legacy/PIN profile (bits 7,9,27,30,42 -> 0x48000280,0x400) dropped. Bit 27 no longer advertised.
+- §1.2 features row, §1.4 bullet, gate 1.11 (mask equality test), Sprint 2 gate 2.1 (transient, no PIN
+  surface, no pairing store), §9.1 D5/D6, §9.2 item 1 marked RESOLVED, C16 corrected (no Sprint-2 PIN UI).
+- i18n (English default + multi-language): §5.8 bridge gains `set_locale` + `locales`/`locale` in the hello
+  envelope; strings live in assets/i18n/<locale>.json; C13 gains `locale`; C16 mandates i18n::get(); gates
+  1.6/1.7 extended; Appendix A adds "hardcoded copy is a defect".
+- CI guards (foundry): vcpkg binary cache (`x-gha`) + VCPKG_DISABLE_METRICS in ci.yml; no-op
+  -DCMAKE_BUILD_TYPE removed for the multi-config VS generator (measured by @code-executor: variable absent
+  from CMakeCache.txt); build dir must be in-repo (MSB8029 in %TEMP%); .gitignore guard lines documented.
+- Gate measurement split: 1.1/1.10 = CI gates (compile+ctest, runner has no GPU, NVDEC compile-only);
+  1.2-1.9/1.11/1.12 + every Sprint 2-4 performance number = local GPU gates.
+Brief v3: 952 lines / 71,801 bytes (pre-final C16 fix).
+
+## Revision v3.1 2026-09-16 (deviation sign-off + verified preset breaker)
+- SIGNED OFF: `vcpkg-configuration.json` dropped (builtin registry). Reason accepted: a default-registry pin
+  forces a full registry clone at configure time, and a --depth 1 clone has no matching baseline hash, so
+  CI would fail. Brief §3 row, §6.1 tree and the §6.3 ci.yml comment updated to say exactly that (brief and
+  file must not disagree). Re-add the pin once the runner's baseline hash is known.
+- FOUND ON DISK (blocker for local gate 1.1): `VCPKG_ROOT` is unset — `echo $VCPKG_ROOT` empty and
+  `reg query HKCU\Environment` lists only VCPKG_BINARY_SOURCES + VCPKG_DISABLE_METRICS — while
+  CMakePresets.json line 11 uses `$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake`. Empty env var =>
+  toolchain path `/scripts/buildsystems/vcpkg.cmake` => configure failure for `local-vs18` and `ninja`.
+  Fix: §6.4 now includes `setx VCPKG_ROOT "C:\dev\vcpkg"`; recommended preset fix is a hardcoded
+  `C:/dev/vcpkg` in the local presets (CI keeps `$env{VCPKG_INSTALLATION_ROOT}`).
+- Verified independently: commit adaee6a on branch master, 0 remotes, `gh` not installed, vcpkg.json uses
+  `default-features: false` + explicit features (so no gpl/nonfree codecs sneak in — matches §1.5/§3).
+
+## Revision v3.2 2026-09-16 (FFmpeg decoupled from Sprint 1 after the fork failure)
+- Evidence: `grep -rn "FFMPEG|avcodec|find_package"` over the repo (excluding vcpkg_installed) returns exactly
+  one hit — `tests/CMakeLists.txt:1: find_package(Catch2 3 CONFIG REQUIRED)`. Nothing links libavcodec in
+  Sprint 1, yet vcpkg.json listed ffmpeg as a hard dependency -> the heaviest source build in the manifest
+  was gating a gate that does not need it. `wmic OS get FreePhysicalMemory` = 6,020,216 KB (~5.7 GB free of
+  15.8 GB), consistent with FFmpeg's configure fork dying (0xC0000142 / fork: Resource temporarily
+  unavailable) reported by @foundry.
+- Decision: ffmpeg moves into the vcpkg manifest feature `video`; CMake gets `AIRPLAY_ENABLE_FFMPEG`
+  (default OFF); Sprint 1 builds with media OFF locally and in CI; CI enables `video` from Sprint 2.
+- New gate 2.0 (Sprint 2 entry): FFmpeg-dev linkable (vcpkg `video` OR BtbN lgpl-shared + AIRPLAY_FFMPEG_ROOT)
+  plus a one-frame H.264 smoke decode reporting codec + decodeMode.
+- Risk register: R14 (advertised capability != implemented capability; resolves the dangling R14 reference in
+  gate 1.11) and R15 (local dependency source-build resource exhaustion + retry/plan-B policy).
+
+## Revision v3.3 2026-09-16 (mDNS must go through the running Bonjour daemon)
+Verified on disk (not taken on trust): `sc query "Bonjour Service"` = RUNNING; `tasklist` shows
+mDNSResponder.exe pid 10956; `netstat -ano | grep :5353` shows pid 10956 on 192.168.1.14:5353 plus three
+other PIDs on 0.0.0.0:5353 (i.e. the port is already contended); `dns-sd.exe` (96,104 B) and `dnssd.dll`
+(85,864 B) exist in System32; a filesystem search found **no** `dns_sd.h` and no `Bonjour SDK`; VS 18
+BuildTools has **no atlmfc** (so ATL/MFC-dependent builds — the SDK's dns-sd CLI, and the msbuild-based
+vcpkg mdnsresponder port — are not viable here).
+Decisions:
+- Advertiser registers through the daemon via dynamically loaded `dnssd.dll` + vendored Apache-2.0
+  `dns_sd.h` (apple-oss-distributions/mDNSResponder). Our process must never bind 5353 while a daemon is
+  present; hand-rolled responder only on Bonjour-less hosts, where it must own 5353 exclusively.
+- vcpkg `mdnsresponder` demoted to optional feature `mdns-vendored`; default Sprint 1 deps = openssl,
+  spdlog, catch2 (pure CMake ports) — removes both the FFmpeg and the ATL risk from gate 1.1.
+- Gates: 1.2/1.11 verify with the system `dns-sd.exe`; 1.3 additionally proves our PID is not the 5353
+  owner; 4.3 + C19 handle the Bonjour runtime dependency for end users (bundle vs prompt; Apple terms).
+- R4 rewritten: the flakiness cause is (a) multi-homed adapters and (b) fighting the daemon for 5353.
+
+## Handed to
+@prd-maker (PRD + task list), then @ui-designer, @code-executor (no code before PRD + review APPROVED).

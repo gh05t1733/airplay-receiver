@@ -1,0 +1,104 @@
+{
+  "meta": {
+    "locale": "en",
+    "name": "English",
+    "version": 1
+  },
+  "app": {
+    "title": "AirPlay Receiver"
+  },
+  "state": {
+    "idle": {
+      "label": "STARTING",
+      "detail": "preparing network advertisement…"
+    },
+    "advertising": {
+      "label": "READY",
+      "detail": "waiting for a Mac to connect"
+    },
+    "connected": {
+      "label": "CONNECTED",
+      "detail": "{peer}"
+    },
+    "streaming": {
+      "label": "RECEIVING",
+      "detail": "{width}×{height} · {codec} · {fps}"
+    },
+    "error": {
+      "label": "FAILED",
+      "detail": "{reason}"
+    },
+    "degraded": {
+      "label": "LOW FPS",
+      "detail": "fps {fps} — check CPU/GPU"
+    }
+  },
+  "metric": {
+    "fps": "fps {value}",
+    "present": "present {value}",
+    "drop": "dropped {value}",
+    "cpu": "CPU {value}%",
+    "ram": "RAM {value} MB",
+    "peer": "{name} · {address}",
+    "source": "{width}×{height} · {codec}",
+    "decode": "decode {value}",
+    "avdelta": "A/V {value} ms",
+    "audio": "audio {value} ms",
+    "bind": "bind {status} ({port})",
+    "iface": "iface {name} ({type})",
+    "locale": "locale {value}"
+  },
+  "overlay": {
+    "hint_keys": "F1 = full overlay   ·   ESC / Alt+F4 = quit"
+  },
+  "error": {
+    "bind": {
+      "title": "FAILED TO START",
+      "port_in_use": "RTSP port {port} is already in use by another program.",
+      "no_interface": "No usable network interface was found to advertise on.",
+      "hint": "Close that program, or change \"rtsp.port\" in config.json."
+    },
+    "log_path": "Log: {path}"
+  },
+  "pairing": {
+    "requested": {
+      "label": "PAIRING",
+      "detail": "{peer} is requesting to connect"
+    },
+    "failed": {
+      "label": "FAILED",
+      "detail": "Pairing was refused or timed out — try again from the Mac."
+    },
+    "pin": {
+      "title": "Enter this code on your Mac",
+      "detail": "AirPlay will show a code request on the Mac's screen.",
+      "expiry": "Expires in {seconds} s",
+      "cancel": "Cancel",
+      "expired": "The code expired — start again from the Mac."
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "device_name": "Device name",
+    "audio_device": "Audio device",
+    "latency": "Audio buffer",
+    "hw_decode": "Hardware decoding",
+    "scaling": "Scaling",
+    "log_level": "Log level",
+    "ui_scale": "Interface scale"
+  },
+  "diag": {
+    "title": "Diagnostics",
+    "copy": "Copy",
+    "empty": "No log lines yet."
+  },
+  "tray": {
+    "show": "Show window",
+    "fullscreen": "Fullscreen",
+    "mute": "Mute",
+    "stats": "Statistics",
+    "quit": "Quit",
+    "tooltip": "AirPlay Receiver"
+  }
+}

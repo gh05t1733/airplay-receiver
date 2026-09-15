@@ -1,0 +1,73 @@
+# Build output
+build/
+dist/*
+!dist/.gitkeep
+out/
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.msi
+*.zip
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.suo
+*.user
+
+# .NET / WPF
+[Bb]in/
+[Oo]bj/
+*.userprefs
+project.lock.json
+*.nuget.props
+*.nuget.targets
+
+# Rust / Tauri (if UI switches to Tauri)
+target/
+Cargo.lock.bak
+
+# Node (CI / tooling)
+node_modules/
+npm-debug.log*
+
+# Python (tooling scripts)
+__pycache__/
+*.py[cod]
+.venv/
+
+# Test / profiling artifacts
+test-results/
+*.log
+perfview*.etl
+*.etl
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+*~
+*.swp
+.claude/settings.local.json
+.hermes/
+
+# vcpkg (manifest mode drops these in the repo root)
+vcpkg_installed/
+vcpkg-manifest-install.log
+CMakeUserPresets.json

@@ -1,0 +1,104 @@
+{
+  "meta": {
+    "locale": "id",
+    "name": "Bahasa Indonesia",
+    "version": 1
+  },
+  "app": {
+    "title": "Penerima AirPlay"
+  },
+  "state": {
+    "idle": {
+      "label": "MENYALA",
+      "detail": "menyiapkan iklan jaringan…"
+    },
+    "advertising": {
+      "label": "SIAP",
+      "detail": "menunggu Mac terhubung"
+    },
+    "connected": {
+      "label": "TERHUBUNG",
+      "detail": "{peer}"
+    },
+    "streaming": {
+      "label": "MENERIMA",
+      "detail": "{width}×{height} · {codec} · {fps}"
+    },
+    "error": {
+      "label": "GAGAL",
+      "detail": "{reason}"
+    },
+    "degraded": {
+      "label": "FPS RENDAH",
+      "detail": "fps {fps} — cek CPU/GPU"
+    }
+  },
+  "metric": {
+    "fps": "fps {value}",
+    "present": "tampil {value}",
+    "drop": "hilang {value}",
+    "cpu": "CPU {value}%",
+    "ram": "RAM {value} MB",
+    "peer": "{name} · {address}",
+    "source": "{width}×{height} · {codec}",
+    "decode": "dekode {value}",
+    "avdelta": "A/V {value} ms",
+    "audio": "audio {value} ms",
+    "bind": "bind {status} ({port})",
+    "iface": "iface {name} ({type})",
+    "locale": "locale {value}"
+  },
+  "overlay": {
+    "hint_keys": "F1 = overlay penuh   ·   ESC / Alt+F4 = keluar"
+  },
+  "error": {
+    "bind": {
+      "title": "GAGAL MENYALA",
+      "port_in_use": "Port RTSP {port} sudah dipakai program lain.",
+      "no_interface": "Tidak ada antarmuka jaringan yang bisa dipakai untuk mengiklankan diri.",
+      "hint": "Tutup program itu, atau ubah \"rtsp.port\" di config.json."
+    },
+    "log_path": "Log: {path}"
+  },
+  "pairing": {
+    "requested": {
+      "label": "PAIRING",
+      "detail": "{peer} minta terhubung"
+    },
+    "failed": {
+      "label": "GAGAL",
+      "detail": "Pairing ditolak atau kehabisan waktu — ulangi dari Mac."
+    },
+    "pin": {
+      "title": "Masukkan kode ini di Mac",
+      "detail": "AirPlay akan menampilkan permintaan kode di layar Mac.",
+      "expiry": "Berlaku {seconds} detik",
+      "cancel": "Batal",
+      "expired": "Kode kedaluwarsa — ulangi dari Mac."
+    }
+  },
+  "settings": {
+    "title": "Pengaturan",
+    "language": "Bahasa",
+    "device_name": "Nama perangkat",
+    "audio_device": "Perangkat audio",
+    "latency": "Buffer audio",
+    "hw_decode": "Dekode perangkat keras",
+    "scaling": "Penskalaan",
+    "log_level": "Level log",
+    "ui_scale": "Skala antarmuka"
+  },
+  "diag": {
+    "title": "Diagnostik",
+    "copy": "Salin",
+    "empty": "Belum ada baris log."
+  },
+  "tray": {
+    "show": "Tampilkan jendela",
+    "fullscreen": "Layar penuh",
+    "mute": "Bisukan",
+    "stats": "Statistik",
+    "quit": "Keluar",
+    "tooltip": "Penerima AirPlay"
+  }
+}

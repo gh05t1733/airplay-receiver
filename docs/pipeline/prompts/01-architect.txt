@@ -1,0 +1,101 @@
+# TASK (from @foundry, studio orchestrator) — STEP 2 of studio-pipeline: ARCHITECTURE BRIEF
+
+You are @architect in the Foundry studio pipeline. Chain:
+@pm → **@architect (you)** → @prd-maker → @ui-designer → @code-executor → @reviewer → @deployer → @docs-writer → @foundry.
+
+## Project
+AirPlay HD Receiver — an open-source Windows PC application that receives AirPlay
+screen mirroring from a MacBook (1080p60 min, 4K ideal, audio sync, low latency).
+Owner: Group Arakatian (small team: 1 lead + 1 engine dev + 1 UI/QA). Goal: open source,
+easy to contribute, production-stable.
+
+## Workspace (READ THESE FIRST — they are the source of truth)
+Repo root: C:/Users/REUMMM/airplay-receiver
+- docs/source/Arahan-AirPlay-App.md      → full spec + 4-sprint breakdown (READ FULLY)
+- docs/source/Dev-Environment-AirPlay.md → intended dev environment
+- docs/source/Knowledge-AirPlay-App.md   → knowledge note
+Existing repo: git initialised, folder skeleton (src/core, src/ui, src/common, tests,
+scripts, third_party, docs/, .github/workflows), .gitignore. No code yet.
+
+## Machine (RE-VERIFIED by @foundry on 2026-09-16 — these override the vault docs)
+Windows 11 (64-bit), 38 GB free on C:, network access to GitHub releases works.
+- COMPILER: MSVC present via **Visual Studio 18 BuildTools** at
+  `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools` (vswhere confirms).
+  `cl.exe` is NOT on PATH — build via `vcvars64.bat` / "x64 Native Tools" or the
+  CMake `Visual Studio 18 2026` generator. There is NO MinGW/gcc/clang.
+- ON PATH: git 2.55.0, Python 3.11.16, Node 22.23.2, dotnet (runtime only).
+- FFmpeg 9.0 gyan.dev "full" build on PATH is **binary-only** (bin/ffmpeg.exe,
+  ffplay, ffprobe + doc/presets — NO include/, NO lib/*.lib). It reports
+  --enable-nvdec --enable-cuvid --enable-d3d11va --enable-dxva2, so the *runtime*
+  supports NVDEC, but it CANNOT be linked against. The brief must state exactly
+  which dev package a contributor adds (e.g. BtbN
+  `ffmpeg-master-latest-win64-gpl-shared` which ships include/ + lib/) and where
+  it goes (third_party/ffmpeg, gitignored, fetched by scripts/).
+- **NOT installed: CMake** (winget has `Kitware.CMake` 4.4.3 — that is the intended
+  install path), vcpkg, **.NET SDK** (`dotnet --list-sdks` → none; the `dotnet` on
+  PATH is a runtime stub, so **WPF is NOT buildable today** until an SDK is
+  installed), Rust/cargo, GStreamer, Bonjour/dnssd SDK, MSBuild on PATH.
+- Consequence you must reason about explicitly: any UI choice that needs an SDK
+  (WPF/Tauri) is an extra install step in Sprint 1. A Win32 + D3D11 window inside
+  the C++ core is the only UI-capable option that builds with what is on the box
+  right now. Recommend accordingly and say what must be installed, in order.
+
+## CRITICAL: protocol reality check (verify with web research, do NOT assume the vault spec is right)
+The vault spec describes the PC as an "RTSP receiver" that *browses* mDNS to *find* the
+MacBook. For AirPlay screen mirroring the direction is the opposite: the PC must act as an
+AirPlay **receiver/server** that *advertises* itself over mDNS/DNS-SD and the MacBook (the
+sender) discovers and connects to it. Research and resolve, with sources:
+- which mDNS services must be registered/advertised by the PC (`_airplay._tcp.local`,
+  `_raop._tcp.local`, TXT record keys: deviceid, features, flags, pk, pi, srcvers, vv, model,
+  rsf, ft, am, sf, md) — and whether browsing is needed at all;
+- the real RTSP handshake for mirroring: OPTIONS → ANNOUNCE → SETUP (streams) →
+  RECORD → (GET_PARAMETER keepalive), plus `SETUP` over TCP vs UDP interleaved, and the
+  `SET_PARAMETER` progress/heartbeat;
+- pairing/encryption reality: legacy (no auth), PIN pairing, and the newer FairPlay/SRP
+  pairing + AES-128-CBC/HMAC-SHA1 stream decryption — what is *required* for macOS Sonoma/Sequoia
+  (AirPlay 2) vs what can be deferred;
+- what is legally/technically safe to reuse: study UxPlay (RPiPlay successor),
+  shairport-sync (audio), AirPlayServer/pyatv (protocol reference), GnuGPL vs MIT/LGPL
+  implications if we link GPL code — the project should be Apache-2.0/MIT, so flag any
+  licence conflict clearly.
+State plainly what Sprint 1 can realistically achieve (e.g. "PC advertises as AirPlay
+receiver, Mac sees it in Control Center as a screen-mirroring target") vs what needs the
+encryption/pairing work in Sprint 2.
+
+## Deliverable — WRITE THIS FILE
+Path: C:/Users/REUMMM/airplay-receiver/docs/architecture/ARCHITECTURE-BRIEF.md
+Sections (use these exact headings):
+1. **Protocol Reality Check** — corrected data flow, service/TXT records, handshake sequence,
+   encryption/pairing requirements, licence constraints. Cite sources (URLs).
+2. **Component Map** — every component, its responsibility, and which layer it lives in.
+3. **Stack per Layer** — table: Layer | Choice | Why | Rejected alternatives. Must decide:
+   UI = WPF(.NET 8) vs Tauri vs Electron with a firm recommendation; core = C++20;
+   FFmpeg delivery (vcpkg manifest vs prebuilt vs submodule); mDNS (dnssd/Bonjour SDK vs
+   mdnsresponder submodule vs a small pure-C++ responder); renderer (D3D11 with
+   DXGI swap chain vs Media Foundation); audio (WASAPI shared vs exclusive mode).
+4. **Threading & Queues** — thread inventory (discovery/advertise, RTSP control, RTP
+   receive, video decode + NVDEC, render, audio render, UI), queue/buffer design, drop
+   policy, clock/sync master (audio master vs video master), shutdown ordering.
+5. **Interfaces** — C++ module boundaries with the key header/interface sketches
+   (IRtspServer, IAirPlaySession, IVideoDecoder, IVideoRenderer, IAudioRenderer,
+   IConfig, ILogger, ICoreBridge), and the IPC contract between core and UI
+   (named pipes vs local WebSocket/nng — pick one, define the message schema: JSON lines).
+6. **Repo/Build Layout** — final directory tree, CMake target graph, how CI
+   (.github/workflows) builds it on windows-latest, dependency bootstrap story.
+7. **Risk Register** — risk | impact | likelihood | mitigation | which sprint handles it.
+8. **Sprint Gates** — per sprint (1-4) the exact acceptance criteria + measurable bars
+   (e.g. CPU < 20%, RAM < 500 MB, frame drop < 1%, A/V sync < 50 ms) and what must exist
+   before the next sprint starts.
+9. **Open Decisions for the User** — anything only the human can decide (UI stack if you
+   genuinely can't pick, licence, 4K scope). Keep to <=5 bullets.
+10. **Diagram** — a mermaid `flowchart`/`sequenceDiagram` of the corrected architecture.
+
+## Rules
+- Ground every technical claim in a real source or a real repo; put URLs inline.
+- No hand-waving: name files, libraries, versions, and exact commands.
+- Be honest about difficulty. A wrong-but-confident brief costs the team a sprint.
+- Write the file with your file tools. Then APPEND one handoff line to
+  C:/Users/REUMMM/airplay-receiver/docs/pipeline/HANDOFFS.md in the form:
+  `| <ISO date> | architect | prd-maker | docs/architecture/ARCHITECTURE-BRIEF.md | <one-line status> |`
+  (create the file with a header row if missing).
+- Final reply: <= 15 lines — key decisions, biggest risk, and the handoff to @prd-maker.

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "airplay-receiver",
+  "version-string": "0.1.0",
+  "description": "AirPlay HD receiver for Windows 10/11 (Sprint 1: advertisement + /info + Win32/D3D11 window).",
+  "license": "Apache-2.0",
+  "dependencies": [
+    "openssl",
+    "spdlog",
+    "catch2"
+  ],
+  "features": {
+    "mdns": {
+      "description": "Apple mDNSResponder (Bonjour-compatible advertiser). Requires the MSVC MFC component - the port builds dnssd.dll/dnssd.lib fine but its dns-sd CLI tool fails with RC1015 'cannot open include file afxres.h' when MFC is absent (measured on VS 18 BuildTools). Enable with -DVCPKG_MANIFEST_FEATURES=mdns.",
+      "dependencies": [
+        "mdnsresponder"
+      ]
+    },
+    "video": {
+      "description": "FFmpeg media stack (avcodec/avformat/swscale/swresample + NVDEC). Sprint 2+ only - enable with -DVCPKG_MANIFEST_FEATURES=video. Not required to configure, build or test Sprint 1 (brief v3.2, gate 2.0).",
+      "dependencies": [
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [
+            "avcodec",
+            "avformat",
+            "swscale",
+            "swresample",
+            "nvcodec"
+          ]
+        }
+      ]
+    }
+  }
+}

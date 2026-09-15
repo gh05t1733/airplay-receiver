@@ -1,0 +1,95 @@
+STEP 3 — PRD Maker (AirPlay HD Receiver, Sprint 1: Foundation)
+Date: 2026-09-16
+Artifact: docs/prd/PRD-AIRPLAY-SPRINT1.md (39,453 bytes)
+
+INPUTS CONSUMED
+- docs/architecture/ARCHITECTURE-BRIEF.md (read fully, 875 lines)
+- @reviewer pre-review: 1 blocker (CI generator) + 4 advisory
+- @deployer toolchain audit: MSVC ready; CMake/vcpkg/Ninja/FFmpeg-dev/.NET SDK missing
+- @foundry disk verification: repo has 0 commits, src/ + tests/ + third_party/ + .github/workflows/ empty
+
+DECISIONS LOCKED IN THE PRD
+1. CI generator is normative in the PRD: `-G "Visual Studio 17 2022"` (or Ninja).
+   Brief §6.3 says `"Visual Studio 18 2026"` -> would fail configure on windows-latest (runner = VS 2022 17.14).
+   @architect owes a 1-line patch to §6.3 + §3 alignment. Until patched, the PRD is the source of truth.
+2. Ed25519 identity (pk/pi/psi) is GENERATED + PERSISTED in Sprint 1 so discovery is never re-tested,
+   but `advertise_pk` defaults FALSE because pairing does not exist until Sprint 2.
+   New risk R14 added: advertising a pairing promise we cannot keep = misleading failure.
+3. Sprint 1 tasks are expressed as a GATE SEQUENCE, not an 8-week calendar (R11 = High/High on a 1-3 person team).
+4. Task 0 is the toolchain blocker: CMake + vcpkg bootstrap + Ninja + FFmpeg dev (vcpkg manifest).
+   Explicitly NOT the installed gyan FFmpeg (verified bin-only, cannot link).
+
+TXT FEATURE MASK (computed, not remembered — python (1<<b) reduction)
+- bits 7,9,30,42            -> "0x40000280,0x400"    (Sprint 1 default)
+- bits 7,9,27,30,42         -> "0x48000280,0x400"    (if the legacy-pairing decision sets bit 27)
+- flags = 0x4
+- _raop._tcp instance name = "<MAC-UPPERCASE>@<Display Name>"
+
+SPRINT 1 SCOPE SUMMARY
+MUST: toolchain+CI (1.1), advertise both services (1.2/1.3), GET /info with valid bplist (1.4),
+      documented refusals for pairing routes (1.5), Win32+D3D11 window >=60Hz + overlay (1.6),
+      config+rotating log (1.7), bind-failure non-zero exit (1.8), shutdown order + no leaks (1.9).
+WON'T: pairing/FairPlay, RTP, decode, REAL VIDEO FRAME (Sprint 2 gate), CoreBridge UI client,
+       WPF/Tauri, tray/hotkeys, installer, 4K, multi-room, PTP, buffered audio, HomeKit, HLS.
+
+TASK LIST (ordered, 11 tasks)
+T0 toolchain (blocker) / T1 repo baseline + first commit / T2 CMake+vcpkg+presets /
+T3 CI + license-scan (gate 1.1) / T4 arak_common / T5 bplist codec / T6 RTSP + /info + refusals /
+T7 advertiser + identity / T8 Win32+D3D11 window / T9 app wiring + shutdown / T10 verification bundle.
+
+OPEN DECISIONS FOR @user (4)
+11.1 UI stack Sprint 1 -> recommend Win32+D3D11 (WPF needs a .NET SDK install)
+11.2 4K -> recommend cut from v1.0
+11.3 First frame = Sprint 2, not Sprint 1 -> MUST be confirmed explicitly (changes the user's original expectation)
+11.4 Pairing profile: legacy + static PIN shown as an overlay on the existing window (C16), bit 27 advertised
+     -> closes the "component map has no PIN screen" gap; implementation stays behind IPairingManager
+
+DO-NOT-CLAIM (carried from brief Appendix A)
+No video reception, no mDNS browsing, no WPF UI, no "links FFmpeg", no "shairport-sync is MIT".
+
+STATUS: DONE. Handoff -> @ui-designer (DESIGN.md + wireframe for the Sprint 1 window/overlay).
+NOT BUILT: nothing in this sprint has been compiled. Repo still has 0 commits; Task 0 not started.
+
+=== REVISION 2 (2026-09-16) — after brief patch + toolchain lane + design handoff ===
+PRD is now 563 lines / 45,489 bytes. 13 targeted edits applied and verified on disk.
+
+FLAGS CLOSED (all three "owed" items are now RESOLVED, verified by @reviewer against the 920-line brief):
+  §0.1 CI generator  -> brief §6.3 patched to `Visual Studio 17 2022`; @deployer PROVED via `cmake --help`
+                        that `Visual Studio 18 2026` is local-only and the local default.
+  §0.2 §9 items      -> brief §9.1 records D1-D4; §9.2 holds transient-vs-PIN.
+  §8.2 Ed25519       -> brief moved pk/pi/psi to Sprint 1; now gate 1.12 in the checklist.
+
+CONTRADICTION RECONCILED (§11.4) — the one real conflict in this project so far:
+  My v1 PRD recommended "legacy profile: bit 27 + static-PIN pair-setup + PIN overlay in C16".
+  Brief §9.2 recommended TRANSIENT. @ui-designer caught the conflict; it decided both the advertised
+  features mask AND whether Sprint 2 owes a PIN surface.
+  RESOLUTION: TRANSIENT wins. Per airplay2-rs the transient flow (X-Apple-HKP: 4) completes at M4
+  (SRP shared secret IS the key) -> skips M5/M6 Ed25519 AND pair-verify -> no pairing store, no PIN UI.
+  Advertised mask flips:
+     legacy/PIN (bit 27)  bits 7,9,27,30,42  -> 0x48000280,0x400   [REJECTED]
+     TRANSIENT (bit 48)   bits 7,9,30,42,48  -> 0x40000280,0x10400 [ADOPTED]
+  PIN surface stays specced (DESIGN.md §8.2) but unbuilt. Mask value computed with python, not recalled.
+  Gate 1.11 = consistency gate: advertised bits must match what Sprint 2 implements.
+
+NIT FIXED (mine, from @reviewer + @code-executor's measurement):
+  My ci.yml guidance carried the brief's `-DCMAKE_BUILD_TYPE=Release` alongside a MULTI-CONFIG generator,
+  where it is a no-op. Proven: with the VS generator CMAKE_BUILD_TYPE is absent from CMakeCache.txt;
+  with Ninja it is present and authoritative. PRD now says do one or the other, never both; the VS path
+  drops the flag and relies on --config Release; the Ninja path requires vcvars (ilammy/msvc-dev-cmd in CI).
+  Also recorded: never put the build dir under %TEMP% (MSB8029 breaks incremental builds) - use in-repo build/.
+
+NEW GATES ADDED: 1.10 (first commit + remote + green ci.yml URL), 1.11 (pairing-mode consistency),
+  1.12 (persistent Ed25519 identity). Sprint 1 gate set is now 1.1-1.12.
+
+TASK 0 CORRECTED + STATUS: CMake 4.4.3 / Ninja 1.13.2 / vcpkg 2026-07-27 @ C:/dev/vcpkg are ALL DONE and
+  independently verified. My v1 PRD said C:/vcpkg - corrected to C:/dev/vcpkg (kept outside the repo so
+  .gitignore needs no special-casing). Disk guard: VCPKG_BINARY_SOURCES file cache + --clean-after-build
+  (C: has ~38 GB free; ffmpeg[nvcodec]+openssl source builds can eat 8-15 GB of buildtrees).
+  REMAINING: FFmpeg dev (headers+libs) - now the first real blocker - then Task 1 first commit + push.
+  Plan B restated as BtbN **lgpl**-shared (NOT gpl - a gpl build cannot ship in an Apache-2.0 installer).
+
+NEW: §0.5 toolchain status table, §0.6 "unverified claims are not evidence", §11.5 UI language
+  (default Bahasa Indonesia, all strings in one strings.h).
+
+STILL NOT BUILT: no source has been compiled against this project. Repo at 0 commits, .github/ empty,
+  FFmpeg-dev absent. Gates 1.1 and 1.10 remain UNEVALUABLE.

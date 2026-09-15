@@ -1,0 +1,30 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: windows-latest           # CMake 3.31.6 + vcpkg at C:\vcpkg preinstalled (runner-images)
+    env:
+      # vcpkg *source-builds* ffmpeg[nvcodec] + openssl: without a binary cache every push rebuilds for
+      # ~40 min. "x-gha" stores vcpkg binaries in the GitHub Actions cache API (alternative: actions/cache
+      # on %LOCALAPPDATA%\vcpkg\archives keyed by hashFiles('vcpkg.json')).
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      VCPKG_DISABLE_METRICS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1                  # puts cl.exe on PATH
+      # The runner ALREADY ships CMake 3.31.6 and vcpkg at C:\vcpkg (VCPKG_INSTALLATION_ROOT):
+      # builtin registry on purpose — vcpkg-configuration.json was dropped because it forces a full
+      # registry clone on the runner (and its baseline hash does not exist in a --depth 1 clone);
+      # pin the baseline hash here once the runner's vcpkg baseline is known.
+      - run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+               -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+      # NO -DCMAKE_BUILD_TYPE here: the VS generator is multi-config and that variable is a proven no-op
+      # (@code-executor measured it — with a VS generator it does not even appear in CMakeCache.txt). The
+      # configuration comes from --config Release below. Want CMAKE_BUILD_TYPE to mean something? Use
+      # -G Ninja + ilammy/msvc-dev-cmd for vcvars, and then it is required.
+      # Build dir stays IN the repo (build/), never %TEMP%: MSBuild throws MSB8029 and breaks incremental builds.
+      - run: cmake --build build --config Release --parallel
+      - run: ctest --test-dir build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with: { name: airplay-receiver-win64, path: build/Release/*.exe }

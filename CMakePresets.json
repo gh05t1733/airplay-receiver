@@ -1,0 +1,58 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "local-vs18",
+      "displayName": "Local - Visual Studio 18 2026 (verified present via cmake --help)",
+      "description": "VS 18 exists only on this machine; CI uses 17 2022. Multi-config: configuration comes from --config.",
+      "inherits": "base",
+      "generator": "Visual Studio 18 2026",
+      "architecture": { "value": "x64", "strategy": "set" }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI - Visual Studio 17 2022 (what windows-latest ships)",
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "ninja",
+      "displayName": "Ninja + MSVC (single-config; requires vcvars64.bat on PATH)",
+      "description": "Run inside a Developer Command Prompt, or call vcvars64.bat first. CMAKE_BUILD_TYPE is meaningful here.",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "local-vs18-release", "configurePreset": "local-vs18", "configuration": "Release" },
+    { "name": "local-vs18-debug", "configurePreset": "local-vs18", "configuration": "Debug" },
+    { "name": "ci-release", "configurePreset": "ci", "configuration": "Release" },
+    { "name": "ninja-release", "configurePreset": "ninja" }
+  ],
+  "testPresets": [
+    {
+      "name": "local-vs18-release",
+      "configurePreset": "local-vs18",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    { "name": "ci-release", "configurePreset": "ci", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "ninja-release", "configurePreset": "ninja", "output": { "outputOnFailure": true } }
+  ]
+}
