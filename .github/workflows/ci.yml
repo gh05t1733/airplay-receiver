@@ -52,5 +52,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: airplay-receiver-win64
-          path: build/bin/*.exe
+          # *.dll is not optional: vcpkg applocal drops spdlog.dll next to the exe
+          # (seen in run 35016264453: "spdlog.dll -> build\src\Release\spdlog.dll") because
+          # spdlog links dynamically. An .exe-only bundle cannot be started on a clean machine -
+          # a green run that ships an unrunnable binary is still a false green.
+          path: |
+            build/bin/*.exe
+            build/bin/*.dll
           if-no-files-found: error
