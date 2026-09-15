@@ -13,8 +13,3 @@ target_link_libraries(arak_tests PRIVATE
 )
 
 add_test(NAME arak_tests COMMAND arak_tests)
-add_executable(arak_bplist_debug
-    unit/test_bplist_debug.cpp
-)
-target_link_libraries(arak_bplist_debug PRIVATE arak_rtsp Catch2::Catch2WithMain)
-add_test(NAME arak_bplist_debug COMMAND arak_bplist_debug -c "[bplist]")
