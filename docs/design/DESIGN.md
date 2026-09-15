@@ -164,16 +164,39 @@ handler body instead of rewriting the wndproc (T9).
 
 The overlay updates at **1 Hz** (fed by `StatsCollector`, C18/T10), so rasterisation cost is irrelevant.
 
-1. **T9** builds an `OverlayModel`: rows of **already-resolved** strings (from `i18n::get()`, §7) + colours.
-2. **T7** rasterises it once per second via **DirectWrite → A8 bitmap → D3D11 texture** (DirectWrite/D2D ship
-   with Windows; **zero extra installs**, consistent with PRD §11.1).
-3. **T7** draws one premultiplied-alpha textured quad over the presented colour.
+**Invariant (not negotiable).** T9 owns the data and the locale; T7 is the only thread that calls `Present`,
+and the overlay is composited **into the swap chain as a texture**. Whatever rasterises the glyphs, the overlay
+must end up as a D3D11 resource drawn by T7 — never as GDI output sitting on the window.
 
-Rejected: hand-baked glyph atlas (extra asset pipeline for zero benefit) · GDI blit (tearing, DPI pain) ·
-separate layered window (extra HWND, z-order fights, breaks "T7 presents everything").
+**Two accepted mechanisms (pick one — both run at 1 Hz, so cost is irrelevant):**
 
-**DirectWrite note:** `IDWriteTextFormat` is created per (font, size, dpi) and **cached** — never per frame.
-Indonesian is Latin script, so no font-fallback work is required today; this is future-proofing only.
+- **A — DirectWrite → A8 coverage bitmap → D3D11 texture** (original recommendation). DirectWrite ships with
+  Windows, zero installs; slightly more wiring (text format + A8 texture + coverage sampling).
+- **B — GDI → offscreen DIB section (`CreateDIBSection`) → `UpdateSubresource` into a D3D11 texture** ✅
+  **Accepted as the Sprint 1 path** (decided 2026-09-16, after the implementation used `TextOutW`). It reuses
+  GDI text code already written, needs one texture upload per second, and adds no shader work.
+
+**Forbidden — cannot work, do not try:** rasterising GDI text **directly onto the flip-model swap chain or the
+HWND client area**. `IDXGISurface1::GetDC` is not supported on flip-model swap chains, and the brief mandates
+flip-model (§3). GDI-on-HWND + flip-model yields text that flickers, is wiped by `Present`, or never
+composites at all. Mechanism **B** exists precisely to avoid that.
+
+**Antialiasing rule (applies to both A and B).** The overlay card is **78 % translucent**, and subpixel AA
+(ClearType) assumes an opaque background — it would produce colour fringing when alpha-blended over video. Text
+must use **grayscale AA**: GDI `SetTextRenderingHint(..., GGO_GRAY8_BITMAP)`; DirectWrite
+`DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE`. Consequence for mechanism B: the DIB must be **32-bit BGRA with a real
+alpha channel**, not a 24-bit opaque DIB.
+
+**Gate impact: none.** Gate 1.6 tests observable output (overlay present, `fps ≥ 60`, `ESC`/`Alt+F4` exit 0); it
+does not name a rasteriser, and §5.1 named one as a *recommendation*. The gate wording stays as written — this
+is a specification amendment, not a gate change.
+
+Rejected: hand-baked glyph atlas (extra asset pipeline for zero benefit) · separate layered window (extra HWND,
+z-order fights, breaks "T7 presents everything").
+
+**Caching note (A and B).** Text format / DIB + texture are created per (font, size, dpi) and **cached** — never
+per frame. Re-rasterise on `WM_DPICHANGED` and on locale change. Indonesian is Latin script, so no font-fallback
+work is required today; this is future-proofing only.
 
 ### 5.2 Layout — two densities, same data
 
@@ -446,6 +469,8 @@ the log, and any protocol debugging.
 - **No colour-only meaning.** Every state = colour **+ word** (§6). Colour is redundant reinforcement.
 - **Contrast:** primary text ≥ 7:1 on `kBgVideo` (AAA), secondary ≥ 4.5:1. The card's 78% backdrop holds the
   ratio over *any* future video content, not just the Sprint 1 flat colour.
+- **Translucency-safe antialiasing:** **grayscale AA only, never ClearType** — subpixel AA fringes when blended
+  over a translucent card (see §5.1).
 - **DPI:** per-monitor v2; the overlay re-rasterises on `WM_DPICHANGED` (T9 signals T7). Never bitmap-scale.
 - **Glanceability:** state word ≥ 20 DIP at 2 m; PIN digits (if ever built) ≥ 72 DIP at 3 m.
 - **Keyboard-only:** Sprint 1 needs `ESC`, `Alt+F4`, `F1` and nothing else. Sprint 3 tab order follows §10.1

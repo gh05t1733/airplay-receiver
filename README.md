@@ -6,15 +6,15 @@ A lightweight, open-source AirPlay receiver for Windows — receive HD screen mi
 
 | Milestone | Status |
 |-----------|--------|
-| Architecture & Design | ✅ Complete (brief v3.3, PRD Rev 4, DESIGN.md) |
+| Architecture & Design | ✅ Complete (brief + Sprint 1 PRD + DESIGN.md — see [Documentation](#documentation)) |
 | Toolchain (CMake, vcpkg, Ninja, MSVC) | ✅ Working on the dev machine |
-| CI/CD Pipeline (GitHub Actions) | ❌ Red — first run failed on generator discovery |
+| CI/CD Pipeline (GitHub Actions) | ❌ Never green yet — 4 failed runs; fix pushed, verification pending |
 | Sprint 1 — Discovery & Advertisement | ⏳ Not started |
 | Sprint 2 — Video Pipeline (1080p/60fps) | ⏳ Planned |
 | Sprint 3 — Audio + UI | ⏳ Planned |
 | Sprint 4 — Polish + Release v1.0.0 | ⏳ Planned |
 
-**Current state (commit `5d0b57d`):** specification and build scaffolding only. **No AirPlay code has been written or compiled yet**, so this app does not receive, decode or show anything today. The first CI run ([run 35007094126](https://github.com/gh05t1733/airplay-receiver/actions/runs/35007094126)) **failed** — CMake could not find a Visual Studio instance on the runner; the fix (switch CI to the Ninja generator, which the runner does have) is in progress. Sprint 1 gates 1.1 ("builds from a clean checkout") and 1.10 ("CI runs on push") are therefore **not met**. See [What is not done yet](#what-is-not-done-yet) and the [Architecture Brief](docs/architecture/ARCHITECTURE-BRIEF.md).
+**Current state (commit `ffc0496`):** specification and build scaffolding only. **No AirPlay code has been written or compiled yet**, so this app does not receive, decode or show anything today. CI has run four times and **failed each time** — generator discovery, an un-fetchable vcpkg baseline, and one genuine CMake bug (`find_package(spdlog)` was never called, so `spdlog::spdlog` failed at generate time). CI and the local machine now use the **same generator** (`Visual Studio 18 2026`; the runner ships VS 18 Enterprise with the identical MSVC 14.51.36231 toolset, printed by the workflow's `toolchain facts` step). Status is authoritative on the [Actions tab](https://github.com/gh05t1733/airplay-receiver/actions) — not in this file. Sprint 1 gates 1.1 ("builds from a clean checkout") and 1.10 ("CI runs on push") are therefore **not met**. See [What is not done yet](#what-is-not-done-yet) and the [Architecture Brief](docs/architecture/ARCHITECTURE-BRIEF.md).
 
 ## What This Is
 
@@ -45,7 +45,7 @@ Language strings are stored in `assets/i18n/*.json`. Contributions for additiona
 ### Prerequisites
 
 - Windows 10/11 (64-bit)
-- MSVC C++ toolset with the C++ workload — Visual Studio Build Tools 2026 (VS 18) on this machine, VS 2022 on the CI runner
+- MSVC C++ toolset with the C++ workload — Visual Studio 18 (2026): Build Tools 2026 on this machine, VS 18 **Enterprise** on the GitHub runner (same MSVC 14.51.36231 toolset)
 - CMake 3.25+ (4.4.3 verified in the dev environment)
 - Ninja 1.13.2 — needed by the `ninja` preset; run from a Developer Command Prompt or call `vcvars64.bat` first
 - vcpkg at `C:/dev/vcpkg` (**outside** this repo — the `base` preset hardcodes that path)
@@ -60,12 +60,12 @@ cmake --build --preset local-vs18-release
 ctest --preset local-vs18-release
 ```
 
-Available presets: `local-vs18` (VS 18 Build Tools 2026 — the dev machine), `ninja` (single-config, needs vcvars; `CMAKE_BUILD_TYPE` is meaningful here), `ci` (VS 17 2022 — CI only). Build output goes to `build/<presetName>/`, which is why the build and test steps above use `--preset` instead of a bare `build`.
+Available presets: `local-vs18` and `ci` — both `Visual Studio 18 2026`, deliberately the same generator the runner has, so a local build cannot disagree with CI — plus `ninja` (single-config, needs vcvars; `CMAKE_BUILD_TYPE` is meaningful here, but CMake cannot find `ninja` on the runner PATH, so CI does not use it). Binaries land in **`build/<presetName>/bin/`**: `CMakeLists.txt` pins `CMAKE_RUNTIME_OUTPUT_DIRECTORY` (plus its `_<CONFIG>` variants) so the location no longer depends on the generator. vcpkg's applocal-deps copies the runtime DLLs (`spdlog.dll`, `fmt.dll`, `libcrypto-3-x64.dll`) next to the exe, so it runs from there without `PATH` surgery. That is also why the build and test steps above use `--preset` instead of a bare `build` path.
 
-> ⚠️ **Known issue — the presets cannot be read yet, so the commands above fail today.**
+> ⚠️ **Known issue — the presets cannot be read yet, so the commands above fail today.** Still open at HEAD `b5bd074`: five commits have rewritten preset *contents* (including pointing `ci` at VS 18), but the file header never changed.
 > `CMakePresets.json` declares `"version": 6` while CMake 4.x rejects a presets file whose `$schema` sits below version 8:
 > `CMake Error: Could not read presets ... File version must be 8 or higher for $schema support`
-> Verified by A/B on the same file: `"version": 8` lists the presets, `"version": 6` errors out. Either bump the version (the presets path then needs the newer CMake) or drop the `$schema` key. Owner: build tooling.
+> Verified by A/B on the same file: `"version": 8` lists all three presets, `"version": 6` errors out. Two fixes, pick one: bump the version (the presets path then needs the newer CMake, so `cmakeMinimumRequired` has to move too) or drop the `$schema` key (keeps old-CMake compatibility, loses editor schema validation). Verify with `cmake --list-presets` — it must list the presets, not error. Owner: build tooling.
 >
 > Treat everything in this section as the project's **intended** build flow, not as verified steps: no build has ever produced a green CI run yet (see [What is not done yet](#what-is-not-done-yet)). When the two disagree, the CI run is the truth.
 
@@ -73,7 +73,7 @@ FFmpeg is **not** needed to configure, build or test Sprint 1 — it lives behin
 
 ## Architecture
 
-See [docs/architecture/ARCHITECTURE-BRIEF.md](docs/architecture/ARCHITECTURE-BRIEF.md) for the full technical specification (987 lines, 10 sections, source-URLed).
+See [docs/architecture/ARCHITECTURE-BRIEF.md](docs/architecture/ARCHITECTURE-BRIEF.md) for the full technical specification (1,022 lines, every non-obvious claim carrying a source URL or a measured value).
 
 Planned components — **none of these exist in code yet**, and the sprint in brackets is the gate they land in:
 

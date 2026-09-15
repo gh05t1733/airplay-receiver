@@ -211,7 +211,7 @@ Layers: **UI** (C16, C17) · **IPC** (C15) · **Core services** (C1–C6, C12–
 | Layer | Choice (firm) | Why | Rejected alternatives |
 |---|---|---|---|
 | **Language (core)** | **C++20** on MSVC — **local:** VS 18 BuildTools (`cl.exe` 14.51.36231 + Windows SDK 10.0.26100, verified by @deployer and @reviewer); **CI:** VS 2022 `17.14` on `windows-latest` | Needed for direct D3D11/WASAPI/Winsock; C++20 gives `std::span`, `jthread`, `std::atomic_ref` and RAII for socket/COM lifetimes. Compiler is already on the box. | C (no RAII, slower to make safe) · Rust (no toolchain; would need a full rewrite and FFI for D3D11/WASAPI) · C# core (GC framing/latency risk, and no .NET SDK installed) |
-| **Build system** | **CMake ≥ 3.25**. Two generator strings, deliberately: **local** `Visual Studio 18 2026` *only after* `cmake --help` confirms that string exists on the installed CMake (fallback `Ninja` + `vcvars64.bat`); **CI** `Visual Studio 17 2022` (what the runner image actually has) or `-G Ninja`. | Spec'd, CI-native, handles MSVC + vcpkg toolchain in one line. **Not installed yet** → `winget install --id Kitware.CMake -e` is a Sprint 1 task. Never type a generator string from memory: it is version-specific and a wrong one fails configure, not compile. | Hand-written `.vcxproj` (unreviewable, CI-hostile) · Meson (smaller Windows ecosystem) · Bazel (overkill) |
+| **Build system** | **CMake ≥ 3.25**, generator **`Visual Studio 18 2026` on both CI and local** (runner vswhere-verified as VS 18 Enterprise, local as VS 18 BuildTools — same MSVC 14.51 toolset, so `CLAUDE`-style "works locally, dies in CI" drift disappears). Confirm the string with `cmake --help` once per machine, then keep it in `CMakePresets.json` (`local-vs18`, `ci`). | Spec'd, CI-native, handles MSVC + vcpkg toolchain in one line. **Not installed yet** → `winget install --id Kitware.CMake -e` is a Sprint 1 task. Never type a generator string from memory: it is version-specific and a wrong one fails configure, not compile. | Hand-written `.vcxproj` (unreviewable, CI-hostile) · Meson (smaller Windows ecosystem) · Bazel (overkill) |
 | **Dependency manager** | **vcpkg manifest mode** (`vcpkg.json`; **builtin registry** — no `vcpkg-configuration.json` for now, deviation signed off 2026-09-16) | Reproducible dependency selection for FFmpeg/mDNSResponder/OpenSSL/spdlog; preinstalled on GitHub runners (`VCPKG_INSTALLATION_ROOT=C:\vcpkg`) and installable locally via `git clone` + `bootstrap-vcpkg.bat` (no admin; keep the clone at `C:/dev/vcpkg`, **outside** the repo, so `.gitignore` needs no special-casing). | Git submodules of every dep (hours of CI build time for FFmpeg) · hand-downloaded binaries (the reason this brief exists) |
 | **FFmpeg delivery** | **vcpkg `ffmpeg`** with features `[avcodec, avformat, swscale, swresample, nvcodec]`, declared as the **optional manifest feature `video`** and gated in CMake by `AIRPLAY_ENABLE_FFMPEG` (default OFF) — Sprint 1 does **not** link libavcodec, so its build must not depend on this package (see §6.4) (add `gpl` **only** if we ever need x264/x265, and never `nonfree`/`fdk-aac`) | Ships `include/` + `.lib` (linkable) and can be pinned; `nvcodec` adds NVDEC/NVENC; D3D11VA is part of the Windows build. Feature names verified on the [vcpkg ffmpeg page](https://vcpkg.io/en/package/ffmpeg.html). | The **installed gyan.dev "full" build — verified bin-only, no headers/libs → impossible to link** · [BtbN `ffmpeg-master-latest-win64-lgpl-shared`](https://github.com/BtbN/FFmpeg-Builds/releases) as an *offline fallback* only (unpinned, prebuilt, but it does ship `include/`+`lib/`) — **the `lgpl-` variant**, never `gpl-`, so our Apache-2.0 redistribution story survives |
 | **mDNS / DNS-SD** | **Register through the already-running Bonjour daemon**: call `DNSServiceRegister` in `dnssd.dll` (loaded dynamically) from an `IAdvertiser` implementation; vendor the Apache-2.0 `dns_sd.h` header from [apple-oss-distributions/mDNSResponder](https://github.com/apple-oss-distributions/mDNSResponder) into `third_party/mDNSResponder/include/`. vcpkg port `mdnsresponder` becomes the **optional feature `mdns`** (`-DVCPKG_MANIFEST_FEATURES=mdns`) for machines with no Bonjour. | Verified on this machine (2026-09-16): **Bonjour Service is RUNNING** (`mDNSResponder.exe` pid 10956) and already holds `192.168.1.14:5353`, while three *other* PIDs hold `0.0.0.0:5353`. So UDP 5353 is **already owned** — a second responder would either fail to advertise or become the flaky receiver everybody complains about. Going through the daemon is both the shortest path and the correct one, gives us the same conflict resolution Apple devices expect, and needs **zero new build deps** (`C:\Windows\System32\dnssd.dll` present, 85,864 B). | **Hand-rolled responder binding 5353 while a daemon is present** — rejected, that is a port/conflict fight (R4); it stays the fallback only for machines *without* Bonjour, and then it must own 5353 exclusively · **Bonjour SDK for Windows v3.0** — verified **absent** (`no dns_sd.h` anywhere on disk) and it is a developer-only Apple download; and the SDK CLI `dns-sd` build is broken here anyway (`afxres.h`; **no `atlmfc`** in VS 18 BuildTools) · **vcpkg `mdnsresponder` as a hard dependency** — pointless while a daemon is running, **and** its bundled `dns-sd` CLI target cannot build here (measured by @deployer: `RC1015: cannot open include file 'afxres.h'`, VS 18 BuildTools has no MFC). The port's `dnssd.dll`/`dnssd.lib` *do* build, so it stays the fallback — as the optional feature `mdns`, enabled with `-DVCPKG_MANIFEST_FEATURES=mdns` · Avahi (Linux-only) · browsing via a Python/Node helper (absurd for a shipped app) |
@@ -230,7 +230,7 @@ Layers: **UI** (C16, C17) · **IPC** (C15) · **Core services** (C1–C6, C12–
 | **IPC core↔UI** | **Named pipe** `\\.\pipe\arak-airplay-core-<pid>`, **JSON-lines** framing, versioned `v` field; plus an optional shared-memory ring for UI frame preview | Zero dependencies (Win32 `CreateNamedPipe`), trivially debuggable from any language, works with Win32 *now* and with a WPF/Tauri client later without changing the core. | Local WebSocket (needs an HTTP/WS server + deps in the core) · nng (extra dep for a single local client) · embedding UI in-process (a UI crash must not kill the stream) · COM out-of-proc (boilerplate) |
 | **UI** | **Sprint 1: Win32 + D3D11 window inside the core** (builds on this machine today, 0 extra installs, installer stays small). **Sprint 3: optional WPF (.NET 8) client over `CoreBridge`** — only if the team accepts a .NET SDK install step. | The Sprint 1 deliverable ("window with a frame, Settings stubs") is achievable *now*; the UI framework choice must not gate the engine. | **WPF/Tauri/Electron in Sprint 1: not buildable today** (no .NET SDK, no Rust/cargo — verified) — choosing them now converts a 2-week sprint into toolchain setup · Electron also blows the <100 MB installer budget (per the vault spec itself, ~150 MB) |
 | **Installer** | **Inno Setup 6.x** for v1.0.0 (MSI/WiX as a later option) | Single EXE, scripting is quick, supports firewall rules, VC++ runtime bundling, ~small overhead. WiX v4/v5 remains the fallback if MSI is a hard requirement. | WiX-only from day 1 (slower first release) · MSIX (signing/Store friction for an open-source side project) |
-| **CI** | **GitHub Actions `windows-latest`**: vcpkg binary-cached build → `ctest` → artifact; separate release job builds the Inno Setup installer | Runner ships **CMake 3.31.6**, **vcpkg at `C:\vcpkg`**, VS 2022 + Windows SDKs (verified in [runner-images Windows readme](https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md)) → CI can be green even while a contributor's laptop is not. | Self-hosted runner (not available) · Azure Pipelines (no benefit here) |
+| **CI** | **GitHub Actions `windows-latest`**: manifest-mode vcpkg (binary-cached) → configure/build → `ctest` → artifact; separate release job builds the Inno Setup installer | Runner ships **CMake 3.31.6**, **vcpkg at `C:\vcpkg`**, Ninja 1.13.2 — and, **measured by the workflow's own `vswhere` step (runs 35007094126/35009325571/35011478579/35011872714): Visual Studio 18 Enterprise `18.0`, MSVC `14.51.36231`**, i.e. the **same toolset as this dev box**, *not* the VS 17 2022 the image readme implies. | Self-hosted runner (not available) · Azure Pipelines (no benefit here) |
 
 ---
 
@@ -550,9 +550,10 @@ airplay-receiver/
 ├─ NOTICE                         # third-party licences + provenance
 ├─ CONTRIBUTING.md
 ├─ README.md
-├─ .gitignore                     # build*/, dist/, third_party/, *.user,
-│                                 # vcpkg_installed/, vcpkg-manifest-install.log, CMakeUserPresets.json
-│                                 # (vcpkg manifest mode drops vcpkg_installed/ INSIDE the repo root — verified)
+├─ .gitignore                     # build*/, dist/, *.user, vcpkg_installed/,
+│                                 # vcpkg-manifest-install.log, CMakeUserPresets.json,
+│                                 # third_party/ffmpeg/   <-- SCOPED, never a blanket "third_party/"
+│                                 # (see §6.1.1 — the vendored dns_sd.h MUST be committed)
 ├─ .github/
 │  └─ workflows/
 │     ├─ ci.yml                   # windows-latest: configure, build, ctest, artifact
@@ -628,6 +629,47 @@ arak_discovery arak_rtsp  arak_rtp     arak_codec  arak_render  arak_audio
    arak_tests (Catch2) links: common, rtsp, rtp, codec, discovery   [ctest]
 ```
 
+### 6.1.1 `third_party/` policy — what is ignored, what is vendored
+
+| Path | In git? | Why |
+|---|---|---|
+| `third_party/mDNSResponder/include/dns_sd.h` | **COMMITTED (vendored, Apache-2.0)** | The Bonjour daemon C API header (§3). Without it a fresh clone cannot configure — it is source, not a download |
+| `third_party/ffmpeg/` | ignored | BtbN plan-B drop: hundreds of MB, regenerable by `scripts/fetch-ffmpeg-fallback.ps1` |
+| `third_party/README.md` | committed | documents what lives here and under which licence |
+
+**The rule: one scoped line (`third_party/ffmpeg/`), never a blanket `third_party/` plus `!` negations.**
+Git cannot re-include a path whose parent directory is excluded, so `third_party/` + `!third_party/README.md`
++ `!third_party/mDNSResponder/` silently ignores everything — `git add third_party/` "succeeds" while adding
+nothing and the vendored header disappears. That is the same *green-but-empty* failure class as the CI
+artifact bug (§6.3 rule 4), caught empirically by @ui-designer in a scratch repo.
+
+**Two-sided check, mandatory before committing anything in this area (and worth a CI step):**
+
+```
+git check-ignore -v third_party/mDNSResponder/include/dns_sd.h   # MUST exit 1 (committable)
+git check-ignore -v third_party/ffmpeg/include/avcodec.h         # MUST exit 0 (ignored)
+```
+
+**Artifact location must be pinned in CMake, not discovered by a glob.** `RUNTIME_OUTPUT_DIRECTORY` is not
+set anywhere in this repo, so with `add_subdirectory(src)` the executables land in a **per-target,
+per-config** subdirectory — `build/src/Release/airplay-receiver.exe` for the VS generator, `build/src/…`
+for Ninja. That is why `path: build/Release/*.exe` matched **nothing**: two consecutive runs concluded
+`success` (`35013172955`, `35013648139`) while the repository's artifact count stayed **0** —
+`gh api repos/…/actions/artifacts --jq .total_count` → `0`. Set it once at the top level:
+
+```cmake
+# One predictable drop point for CI artifacts, applocal DLLs and (Sprint 4) the installer.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+foreach(cfg IN LISTS CMAKE_CONFIGURATION_TYPES)          # multi-config generators need the per-config form
+    string(TOUPPER "${cfg}" CFG)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CFG} ${CMAKE_BINARY_DIR}/bin)
+endforeach()
+```
+
+Then the upload path is `build/bin/*.exe` **for every generator** — no `**` globs, no generator coupling
+(§6.3 rule 1), and `VCPKG_APPLOCAL_DEPS` drops `spdlog.dll`/`libcrypto-3-x64.dll` beside the exe, which is
+exactly what the installer needs later.
+
 Every module exposes a pure-virtual interface (§5) and hides its implementation behind a factory in
 its own `internal/` folder — that is what makes the Sprint 1 stubs (pairing, WPF UI) swappable without
 touching the pipeline.
@@ -651,10 +693,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1                  # puts cl.exe on PATH
+      # PRINT the facts instead of guessing them. This step is the only reason we learned the runner is
+      # VS 18 Enterprise and not VS 17 2022 — a wrong `-G` string fails at *configure*, not at compile.
+      - name: toolchain facts
+        shell: pwsh
+        run: |
+          cmake --version
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -all -prerelease -property installationPath
+          git -C "$env:VCPKG_INSTALLATION_ROOT" rev-parse HEAD    # the REAL baseline hash to pin later
+          where.exe cl.exe
       # The runner ALREADY ships CMake 3.31.6 and vcpkg at C:\vcpkg (VCPKG_INSTALLATION_ROOT):
       # do not clone a second vcpkg; builtin registry on purpose (no vcpkg-configuration.json): a
-      # default-registry pin forces a full registry clone on the runner. Pin the baseline once known.
-      - run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      # default-registry pin forces a full registry clone on the runner.
+      # Keep manifest mode (vcpkg.json = the ONE dependency source of truth, features included) and let
+      # vcpkg use the builtin registry at the revision the clone ships. Do NOT hand-write a
+      # builtin-baseline: commit c665ced pinned 9e44ec0e…, which the runner's C:\vcpkg does not contain,
+      # and the run died in 23 s with "failed to git show versions/baseline.json". Print the runner's real
+      # hash first (see the toolchain-facts step) and pin it later, never by assumption.
+      - run: cmake -S . -B build -G "Visual Studio 18 2026" -A x64
                -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
       # NO -DCMAKE_BUILD_TYPE here: the VS generator is multi-config and that variable is a proven no-op
       # (@code-executor measured it — with a VS generator it does not even appear in CMakeCache.txt). The
@@ -667,7 +723,40 @@ jobs:
         with: { name: airplay-receiver-win64, path: build/Release/*.exe }
 ```
 
-⚠️ **Correction 2026-09-16 (reviewer gate):** the runner image ships **Visual Studio Enterprise 2022 (`17.14.37614.0`)** only. A `-G "Visual Studio 18 2026"` string would make *configure* fail on the first push and kill gate 1.1 — VS 18 (`v14.51`) exists **only on the local machine**. CI therefore uses `"Visual Studio 17 2022"` (or `-G Ninja`, also preinstalled alongside CMake 3.31.6 and Inno Setup 6.7.1).
+⚠️ **Correction 2026-09-16, superseding an earlier correction in this same section.** The first version here
+claimed the runner had only VS 2022 (`17.14`) and told CI to use `-G "Visual Studio 17 2022"`. **That was
+wrong**: three runs died on it (`could not find any instance of Visual Studio`). The workflow's own
+`vswhere` step settled it — the runner is **Visual Studio 18 Enterprise (`18.0`, MSVC `14.51.36231`)**, the
+same toolset as the local machine. Standing rule from here on: **print toolchain facts from the runner;
+never infer a generator or a vcpkg baseline from a readme, from the local box, or from this document's
+prose.**
+
+**Five hard-won CI rules** (each one cost real runs; they generalise beyond this project):
+
+1. **Generator and artifact path are coupled.** Multi-config (VS) → artifact at `build/<Config>/*.exe`,
+   configuration via `--config`. Single-config (Ninja) → artifact at `build/*.exe`, and `CMAKE_BUILD_TYPE`
+   is mandatory. Mixing them gives a *green* build whose artifact upload is empty — and gate 1.1 asks for
+   the artifact, so "green" would be a lie.
+2. **One dependency source of truth.** `vcpkg install <pkgs>` in classic mode from a temp directory
+   bypasses `vcpkg.json`, so the manifest — including the `mdns`/`video` features — silently stops
+   describing what CI actually builds. Manifest mode everywhere; if a baseline is needed, print the
+   runner's `git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD` and pin that, never a guessed hash.
+3. **A missing `find_package` fails at *generate*, not compile.** `Target "arak_common" links to
+   spdlog::spdlog but the target was not found` (run 35011872714) — the `find_package(spdlog CONFIG
+   REQUIRED)` was simply never called. Every imported target linked anywhere needs its `find_package` in
+   the same directory scope; that is what the `tests/` + `src/` CMakeLists must both satisfy.
+4. **`actions/upload-artifact@v4` must set `if-no-files-found: error`.** The default is `warn`, which
+   produces a **false green**: run `35013172955` concluded **`success`** (12 m 1 s, exit 0) while its own
+   annotation read `No files were found with the provided path: build/Release/*.exe. No artifacts will be
+   uploaded.` — and the run's artifact list is **empty**. Gate 1.1's evidence *is* the artifact; a grey
+   check mark is not evidence, and a wrong path is invisible without this flag. (That run also proves
+   rule 1 empirically: a `-G Ninja` configure with a multi-config artifact path = success + nothing.)
+5. **The presets file itself must load.** `CMakePresets.json` that carries `$schema` requires
+   `"version": 8`; CMake 4.4.3 refuses `version: 6` with the schema (`File version must be 8 or higher for
+   $schema support`) and `cmake --list-presets` dies before doing any work — which then reads like a
+   mysterious "configure failed". Fix: `"version": 8` (keep `cmakeMinimumRequired` at 3.25 — that is the
+   project's floor, not a presets knob) and add a CI step running `cmake --list-presets` and
+   `cmake --list-presets=build` so the file is validated loudly.
 
 CI is the project's source of truth for "it builds": a contributor's laptop may lack CMake or a
 GPU, but a red CI on `windows-latest` is never explainable away. `license-scan.yml` greps
@@ -788,7 +877,7 @@ control exchange; a native window shows a live status overlay.
 | # | Acceptance criterion | How it is proven |
 |---|---|---|
 | 1.1 | Repo **configures, builds and passes `ctest`** on CI (`windows-latest`) from a clean checkout — with the **media feature `video` disabled** (Sprint 1 links no libavcodec, so a FFmpeg source build must not gate this) | green `ci.yml` run URL + artifact; this gate is *compile + tests* only and is never a performance claim |
-| 1.2 | `_airplay._tcp` and `_raop._tcp` advertised with the TXT keys of §1.2 — **registered through the Bonjour daemon** (our process does not bind 5353) | `C:\Windows\System32\dns-sd.exe -B _airplay._tcp` (already installed on this machine — no vcpkg CLI build needed, and that build is broken locally: no `atlmfc`), the same from the Mac, plus a `python-zeroconf` browse on Windows; logs show the registered TXT and the interface index used |
+| 1.2 | `_airplay._tcp` and `_raop._tcp` advertised with the TXT keys of §1.2 — **registered through the Bonjour daemon** (our process does not bind 5353). The two services carry **different** key sets and must be checked separately: `_airplay._tcp` → `deviceid, features, flags, pk, pi, srcvers, vv, model, rsf, protovers`; `_raop._tcp` (instance `<MAC>@<Name>`) → `txtvers, ch, cn, et, md, pw, sr, ss, tp, vn, vs, am, ft, sf, pk` | `C:\Windows\System32\dns-sd.exe -B _airplay._tcp` (already installed on this machine — no vcpkg CLI build needed, and that build is broken locally: no `atlmfc`), the same from the Mac, plus a `python-zeroconf` browse on Windows; logs show the registered TXT and the interface index used |
 | 1.3 | MacBook sees the PC as a **screen-mirroring target** in Control Center (with the Bonjour daemon owning 5353 and our app only registering) | screenshot + capture note in `docs/architecture/protocol-notes.md`; a `netstat -ano \| findstr :5353` check showing **our PID is not the 5353 owner** |
 | 1.4 | RTSP listener accepts and answers `GET /info` with a valid bplist (`name`, `deviceID`, `macAddress`, `model`, `sourceVersion`, `features`, `statusFlags`) | unit test on a canned request; capture of the real Mac's request → our reply |
 | 1.5 | Unknown/unimplemented requests (`/pair-setup`, `/pair-verify`, `/fp-setup`) return a **clean, documented** error and never crash | integration test that posts all four and asserts the process survives |
@@ -797,7 +886,7 @@ control exchange; a native window shows a live status overlay.
 | 1.8 | Bind failures (port in use, no interface) produce actionable log lines + a non-zero exit code | integration test |
 | 1.9 | Thread shutdown ordering implemented (§4.4); 10 connect/disconnect cycles leave zero leaked handles | Task Manager handle count before/after; `_CrtSetDbgFlag` leak check in Debug |
 | 1.10 | Repository has its first commit on the default branch, with `ci.yml` present and running on push | `git log` shows ≥1 commit; an Actions run exists for that commit (gate 1.1 is *unevaluable* while the repo has 0 commits — verified today) |
-| 1.11 | Advertised pairing profile matches the **locked transient mode**: `features` = `0x40000280,0x10400` (bits 7/9/30/42/48) and bit 27 **absent** | TXT from the system `dns-sd.exe -L "<name>" _airplay._tcp` equals the constant compiled into code; a unit test asserts the encoded mask against the bit list (a mismatch here is R14 — advertising a capability we do not have) |
+| 1.11 | Advertised pairing profile matches the **locked transient mode**: `features` = `0x40000280,0x10400` (bits 7/9/30/42/48) and bit 27 **absent** — tested on **`_airplay._tcp`** (the mirroring service; `md`/`ft`/`am`/`sf` are `_raop._tcp` keys and must **not** be required here, or the gate could never pass) | TXT from the system `dns-sd.exe -B _airplay._tcp` then `dns-sd.exe -L "<instance>" _airplay._tcp local` equals the constant compiled into code; a unit test asserts the encoded mask against the bit list (a mismatch here is R14 — advertising a capability we do not have) |
 | 1.12 | Permanent receiver identity generated once (`pk` Ed25519 + `pi`/`psi`), persisted, advertised | identity file under `%LOCALAPPDATA%\Arakatian\AirPlayReceiver\`; TXT shows the same `pk` across two restarts |
 
 **Gate to start Sprint 2:** 1.1–1.12 pass. Explicitly *not* required: a video frame (user decision D3, §9.1).

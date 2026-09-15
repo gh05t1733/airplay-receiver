@@ -71,3 +71,14 @@ desktop.ini
 vcpkg_installed/
 vcpkg-manifest-install.log
 CMakeUserPresets.json
+
+# Vendored third-party payloads (BtbN FFmpeg fallback plan-B lands here: hundreds of
+# MB of FFmpeg headers/libs). Ignore the payload, keep the README that explains it.
+# NOTE: must be "third_party/*", not "third_party/" - git cannot re-include a file
+# inside an excluded directory, so the README negation would silently do nothing.
+third_party/*
+!third_party/README.md
+
+# Stray build trees (e.g. build-sprint1/). Without this, a whole build directory can
+# be swept into a commit by `git add -A`; the brief requires the in-repo build/ dir.
+build*/

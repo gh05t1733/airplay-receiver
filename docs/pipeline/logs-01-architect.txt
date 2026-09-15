@@ -107,5 +107,49 @@ Decisions:
   owner; 4.3 + C19 handle the Bonjour runtime dependency for end users (bundle vs prompt; Apple terms).
 - R4 rewritten: the flakiness cause is (a) multi-homed adapters and (b) fighting the daemon for 5353.
 
+## Revision v3.4 2026-09-16 (CI section corrected against the runner)
+My earlier correction ("CI = VS 17 2022, VS 18 is local-only") was WRONG. Evidence, fetched myself with
+`gh run list`: 8 commits on main, `main` CI runs 35007094126 / 35009325571 / 35011478579 / 35011872714 all
+*failure*, 35013172955 + 35012963622 *in_progress*. The runner-side `vswhere` step added to ci.yml
+(previously "incorrectly typed" as CI = VS 2022) reports VS 18 Enterprise 18.0 / MSVC 14.51.36231.
+Changes to the brief:
+- §3 build-system + §3 CI rows: ONE generator (`Visual Studio 18 2026`) on both local and CI; runner facts
+  corrected (CMake 3.31.6, vcpkg C:\vcpkg, Ninja 1.13.2, VS 18 Enterprise, MSVC 14.51.36231).
+- §6.3: ci.yml re-aligned to manifest mode (vcpkg.json stays the single dependency source of truth incl.
+  the mdns/video features), permanent `toolchain facts` step (cmake --version, vswhere, cl.exe path, plus
+  `git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD`), and an explicit ban on hand-written
+  builtin-baseline (c665ced's 9e44ec0e… is absent from the runner's vcpkg clone → 23 s failure).
+- New subsection "Three hard-won CI rules": generator↔artifact-path coupling, one dependency source of
+  truth, and missing find_package failing at generate time (the spdlog::spdlog bug).
+
+## Revision v3.5 2026-09-16 (false green + third_party policy)
+- FALSE GREEN FOUND (nobody had read the annotation): `gh run view 35013172955` -> "✓ build in 12m1s" with
+  annotation "! No files were found with the provided path: build/Release/*.exe. No artifacts will be
+  uploaded." and `gh api repos/.../runs/35013172955/artifacts` -> empty. Conclusion `success` because
+  upload-artifact's default is `if-no-files-found: warn`. That run used `-G Ninja` (ci.yml at 63b57c2) with
+  the multi-config artifact path -> empirical proof of the generator/artifact coupling rule.
+- §6.3 rules extended from three to five: (4) upload-artifact MUST set `if-no-files-found: error`;
+  (5) presets file must load — `$schema` requires "version": 8 (CMake 4.4.3 rejects v6, `cmake --list-presets`
+  exits 1 before doing anything, which reads like a configure failure); add a CI step for it.
+- New §6.1.1 `third_party/` policy (requested by @reviewer, @prd-maker, @pm): the vendored
+  `third_party/mDNSResponder/include/dns_sd.h` MUST be committed; the only ignore rule is the scoped
+  `third_party/ffmpeg/`; a blanket `third_party/` + `!` negations silently ignores the header (git cannot
+  re-include under an excluded parent) and the two-sided `git check-ignore` test is mandatory.
+  Verified here: `.gitignore` has zero `third_party` rules today and `third_party/` is not on disk.
+
+## Revision v3.6 2026-09-16 (why the artifact was empty + per-service TXT sets)
+- Verified with gh: run 35013648139 = completed/success with annotation "No files were found with the
+  provided path: build/Release/*.exe"; `gh api repos/gh05t1733/airplay-receiver/actions/artifacts
+  --jq .total_count` = **0**. Two green runs, zero artifacts, repo-wide.
+- Root cause: no RUNTIME_OUTPUT_DIRECTORY anywhere; `add_subdirectory(src)` + multi-config VS generator =>
+  binaries in `build/src/Release/`. `build/Release/*.exe` could never match. Deployer's globstar fix works
+  for VS but re-breaks under Ninja.
+- Brief §6.2 now specifies the durable fix (pin CMAKE_RUNTIME_OUTPUT_DIRECTORY to ${CMAKE_BINARY_DIR}/bin
+  plus the per-config variables) so the upload path is `build/bin/*.exe` for any generator and applocal
+  DLLs sit next to the exe (also what the Sprint 4 installer needs).
+- Gate 1.2/1.11 text corrected: the two services have different TXT key sets (`_airplay._tcp` has
+  deviceid/features/flags/pk/pi/srcvers/vv/model/rsf/protovers; `md`/`ft`/`am`/`sf` are `_raop._tcp`
+  keys) — requiring RAOP keys on the AirPlay service would make gate 1.11 unpassable.
+
 ## Handed to
 @prd-maker (PRD + task list), then @ui-designer, @code-executor (no code before PRD + review APPROVED).

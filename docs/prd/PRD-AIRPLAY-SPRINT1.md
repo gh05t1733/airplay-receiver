@@ -11,6 +11,15 @@
 > **Rev 4 (2026-09-16):** CI run #1 came back **RED** and the root cause was read from the raw log — CMake's
 > VS generator finds **no Visual Studio instance** on the runner, so **Path B (`-G Ninja`) becomes mandatory
 > in CI** (§0.1) and the artifact path must change with it (§0.8). Gates 1.1/1.10 are **not met**.
+> **Rev 5 (2026-09-16) — Rev 4's prescription was WRONG and is retracted.** The runner ships **VS 18
+> Enterprise**, so the correct CI generator is `Visual Studio 18 2026` (CI and local = one toolchain), the
+> artifact path must **stay** `build/Release/*.exe`, and Ninja is not viable in CI for an unrelated reason.
+> See §0.1/§0.8 (rewritten) and the new §0.9 CI rules, including the rule that produced this error.
+> **Rev 6 (2026-09-16):** `features` canonical encoding settled (§8.1) — the gate 1.11 deadlock is resolved as
+> *numeric equality **plus** canonical-form assertion*, not either/or. R-A amended to the durable form
+> (pin the output dir; the upload path must not depend on the generator). A **false-green was confirmed and
+> fixed** (two green runs, `artifacts.total_count == 0`). Two spec corrections landed: the `_airplay._tcp`
+> vs `_raop._tcp` TXT key sets are distinct, and the Sprint 1 overlay must terminate as a D3D11 resource.
 
 ---
 
@@ -30,32 +39,46 @@ machine's VS 18 (v14.51) is *local only*.
 | **CI (`ci.yml`)** | `-G "Visual Studio 17 2022"` — or `-G Ninja` (Ninja is preinstalled on the runner) |
 | **Local dev (this box)** | `-G "Visual Studio 18 2026"` — confirm the exact string with `cmake --help` **after** CMake is installed; never hardcode from memory |
 
-**STATUS: REVISED AGAIN 2026-09-16 — Path B (Ninja) is now REQUIRED in CI, because Path A was tried and
-failed empirically.** The brief patch itself was correct and is landed; what was wrong is the *default choice*
-inside it. CI run #1 (§0.8) died with:
+**STATUS: REVISED A THIRD TIME 2026-09-16 — the runner is VS 18, so `Visual Studio 18 2026` is the correct
+generator for CI *and* local. My Rev 4 prescription (Ninja) is RETRACTED.**
+
+Measured, not inferred — the permanent `toolchain facts` step prints `vswhere -all -prerelease -property
+installationPath`, and @reviewer read the same fact verbatim from a raw step log:
 
 ```
-CMake Error at CMakeLists.txt:3 (project):
-  Generator  Visual Studio 17 2022  could not find any instance of Visual Studio.
+Found with vswhere: C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat
 ```
 
-So "the runner has VS 2022" is not the operative fact — CMake's VS generator resolves a *VS instance* through
-vswhere and finds **none** on this runner. Meanwhile `ilammy/msvc-dev-cmd@v1` had already produced a working
-MSVC environment in that same job, which is precisely the precondition Path B needs. **Do not re-litigate
-this with documentation; the log is the evidence.**
+`windows-latest` ships **VS 18 Enterprise** (`VisualStudioVersion 18.0`, MSVC **14.51.36231**) and **CMake
+4.4.3**. That toolset is **identical to this dev box**, so a single generator string serves both.
 
-| Path | Configure | Verdict |
+**How I got it wrong, precisely, because the failure mode is worth more than the fix:** run #1's log told me
+`Visual Studio 17 2022` was *absent*. It did **not** tell me which VS *was* present. I converted one negative
+measurement into a positive prescription and told the team to switch generators — which is the same
+inference-from-documents error that caused this whole detour in the first place, just wearing a log instead of
+a readme. **A failed run tells you what is missing, never what is correct.** Print the environment first
+(§0.9 rule R-D). Three further runs were burned confirming the fix was wrong.
+
+**Measured verdicts on all three generator options:**
+
+| Option | Result | Evidence |
 |---|---|---|
-| **B — REQUIRED in CI** | `-G Ninja` + `-DCMAKE_BUILD_TYPE=Release` | Single-config, so `CMAKE_BUILD_TYPE` is **required and meaningful**; needs an MSVC environment, which `ilammy/msvc-dev-cmd@v1` supplies (already a step) |
-| **A — do NOT use on this runner** | `-G "Visual Studio 17 2022" -A x64` | Multi-config; **empirically unavailable** on `windows-latest` (§0.8). Also `-DCMAKE_BUILD_TYPE` is a no-op under a VS generator |
-| Local dev only | `-G "Visual Studio 18 2026"` | Exists **only** on this box — proved by @deployer with `cmake --help` |
+| **`Visual Studio 18 2026` — USE THIS, CI and local** | ✅ configure **passed** | run `35011872714` got through configure to *generate* (11m36s) — the failure there was a project bug, not the generator (§0.8) |
+| `Visual Studio 17 2022` | ❌ no such instance | runs `35007094126`, `35009325571`, `35011478579`: `could not find any instance of Visual Studio` |
+| `-G Ninja` in CI | ❌ **not viable** — different cause: CMake cannot find `ninja` on PATH | run `35011600092` died in **33 s**. Ninja **is** fine locally beside `vcvars64.bat`; it is simply not the CI answer, and `-DCMAKE_BUILD_TYPE` only matters under it |
 
-**Correction folded in (@reviewer nit, proven by @code-executor):** the brief's `ci.yml` passes
-`-DCMAKE_BUILD_TYPE=Release` while using a **multi-config** generator, where that variable is a **no-op**.
-This was measured, not assumed — with the VS generator `CMAKE_BUILD_TYPE` is absent from `CMakeCache.txt`
-entirely; with Ninja it is present and authoritative. **Do one or the other, never both:** on path A drop
-`-DCMAKE_BUILD_TYPE` and rely on `--config Release`; on path B keep it (Ninja is single-config).
-Two more pitfalls that cost real time: Ninja+MSVC **requires** vcvars while the VS generator finds the
+> ⚠️ **The retired Rev-4 table that used to sit here ("Path B — REQUIRED in CI", "Path A — do NOT use")
+> was DELETED, not edited.** A dead prescription left in a document gets re-adopted by the next reader —
+> which is precisely how the Ninja detour happened. There is now exactly **one** answer:
+
+**ONE generator, CI and local: `Visual Studio 18 2026` (multi-config, `-A x64`).**
+`-DCMAKE_BUILD_TYPE` is **never passed** — under a multi-config generator it is a proven no-op
+(@code-executor measured it *absent* from `CMakeCache.txt`) and `--config Release` is what selects the
+configuration. The only place that variable means anything is `-G Ninja`, which is a **local convenience**
+(fine beside `vcvars64.bat`) and **not a CI answer** — it died in 33 s on the runner because CMake could not
+find `ninja` on PATH.
+
+Two pitfalls that each cost real time: **Ninja+MSVC requires vcvars** while the VS generator finds the
 toolchain unaided; and **never** put the build directory under `%TEMP%` (MSBuild raises `MSB8029` and
 incremental builds break) — use in-repo `build/`.
 
@@ -148,18 +171,49 @@ https://github.com/gh05t1733/airplay-receiver/actions/runs/35007094126 · `headS
 3. **`windows-latest` + CMake's VS generator = unavailable.** Treat any future claim to the contrary as
    requiring a raw log.
 
-**The fix — `.github/workflows/ci.yml`, and only these lines:**
+**The fix (Rev 5 — the Rev-4 table was conditioned on Ninja and is retracted).** The generator is
+`Visual Studio 18 2026` (multi-config), so the artifact path is **already correct** and must **not** change:
 
 | Line | Change |
 |---|---|
-| 20 | `-G "Visual Studio 17 2022" -A x64` → **`-G Ninja`**, and add **`-DCMAKE_BUILD_TYPE=Release`** |
-| 22–25 | Replace the multi-config comment: Ninja is single-config, so `CMAKE_BUILD_TYPE` is required and meaningful; vcvars is supplied by `ilammy/msvc-dev-cmd@v1` (already a step) |
-| 27 | `cmake --build build --config Release --parallel` → `cmake --build build --parallel` |
-| 28 | `ctest --test-dir build -C Release --output-on-failure` → `ctest --test-dir build --output-on-failure` |
-| 30 | **`path: build/Release/*.exe` → `build/*.exe`** — ⚠️ under a single-config generator the exe does **not** land in `Release/`. Leaving this line alone turns a green build into a **silently missing artifact**, and gate 1.1 requires the artifact to be uploaded |
+| configure | `-G "Visual Studio 18 2026" -A x64` ✅ **correct as committed** |
+| build / test | keep `--config Release` / `-C Release` — required for a multi-config generator |
+| upload-artifact | keep `path: build/Release/*.exe` ✅ **correct as committed** under a multi-config generator |
+| upload-artifact | ➕ **add `if-no-files-found: error`** — see §0.9 rule R-E |
+| **do NOT add** | `-DCMAKE_BUILD_TYPE` — a proven no-op under a VS generator (@code-executor measured it absent from `CMakeCache.txt`); it becomes meaningful only under `-G Ninja` |
+| **do NOT pin** | `builtin-baseline` from a hash read on the local clone — the runner's `C:\vcpkg` does not contain it, and the install dies in ~25 s (run `35011478579`). Read the runner's baseline with `git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD` in the `toolchain facts` step **first**, then pin that hash |
 
-**Gates 1.1 and 1.10: NOT MET.** A red run is red. The "push + trigger" half of 1.10 is satisfied; the
-"clean-checkout CI green **with artifact**" half is not. Re-run after the 5-line change and quote the new URL.
+**Two of the four red runs were infrastructure churn caused by wrong advice (mine included, and 3 of 4 were
+@reviewer's generator call before that) — but one was a genuine project bug and it is fixed:**
+run `35011872714` (`-G "Visual Studio 18 2026"`) got all the way through configure and then died at *generate*
+with `Target "arak_common" links to: spdlog::spdlog but the target was not found`, because
+`find_package(spdlog CONFIG REQUIRED)` had never been called. **A missing `find_package` fails at generate,
+not at compile** — worth remembering, because the error message points at the link line, not the missing
+import (§0.9 rule R-C).
+
+**Gates 1.1 and 1.10: STILL NOT MET as of this revision.** A red run is red and an in-flight run is not
+green. The latest run (`35013648139`, headSha `ffc0496` — VS 18 + manifest mode + bound artifact path) was
+**`in_progress` at configure** when this note was written (6m18s in; the healthy vcpkg path needs 10–11 min).
+A stale sibling run (`35013172955`, older sha `63b57c2`) is also still in flight and should be cancelled, or
+it will surface later as a misleading red in the history. **No one may record 1.1/1.10 as met until a
+completed run reports `success` and the `airplay-receiver-win64` artifact is downloaded and shown to contain
+a real `.exe`.**
+
+### 0.9 CI rules — permanent, learned the expensive way
+These are not style preferences. Each one is the residue of a real red run in this sprint, and each has cost
+somebody a cycle. They live in the workflow as comments **and** here.
+
+| Rule | Statement | Why it exists |
+|---|---|---|
+| **R-A** | **Amended — do not bind the upload path to the generator at all; pin it in CMake.** `set(CMAKE_RUNTIME_OUTPUT_DIRECTORY <build>/bin)` **plus** the `_<CONFIG>` variants, then upload **`build/bin/*.exe`** for *any* generator. (Original form: multi-config → `build/Release/*.exe`, Ninja → `build/*.exe`.) | The bound-pair form was documented and still failed: `CMAKE_RUNTIME_OUTPUT_DIRECTORY` had **never been set**, so `add_subdirectory(src)` scattered binaries per-target **per-config** (`build/src/Release/` under VS, `build/src/` under Ninja) and **no** single glob is correct for both. Two runs concluded **`success` with `artifacts.total_count == 0`** — a green build and an empty artifact, i.e. exactly the false gate pass this rule exists to prevent. Bonus: with the dir pinned, `VCPKG_APPLOCAL_DEPS` drops `spdlog.dll`/`libcrypto-3-x64.dll` **beside the exe**, which is the payload Inno Setup needs in Sprint 4 |
+| **R-B** | **One source of truth for dependencies = `vcpkg.json` in manifest mode.** Never `VCPKG_MANIFEST_MODE=OFF` with a hand-written package list in the workflow. | Classic mode from a temp dir makes CI ignore the manifest, so the `mdns`/`video` feature gating becomes invisible in CI and the dependency list forks into two |
+| **R-C** | **Every namespaced target needs its `find_package`.** A missing import fails at **generate**, not compile, and the error names the link line, not the import. | `spdlog::spdlog` without `find_package(spdlog CONFIG REQUIRED)` (run `35011872714`) |
+| **R-D** | **Print the environment; never infer it.** The `toolchain facts` step is **permanent and must never be removed**. | It is the single reason we know the runner is VS 18 and *not* VS 2022 — every actor in this thread, myself included, inferred a toolchain from documentation and got it wrong |
+| **R-E** | **`upload-artifact` must set `if-no-files-found: error`.** | `actions/upload-artifact@v4` defaults to **`warn`**, so an empty artifact still yields `conclusion: success`. Gate 1.1's evidence *is* the artifact; a green run with nothing in it is exactly the "done but hollow" result this PRD forbids (§0.6) |
+| **R-F** | **A failed run identifies what is absent — never what is correct.** Before prescribing a replacement, measure the positive fact (print the versions that *do* exist). | Direct cause of my Rev-4 Ninja prescription and of three wasted runs |
+
+**Also carried from §0.4:** the developer's laptop is not evidence. Local `vcpkg` builds on this box were
+killed by the harness (`exit_code -15`) three times, so **only CI conclusions and on-disk artifacts count**.
 
 ---
 
@@ -378,13 +432,47 @@ class IAdvertiser {
   std::vector<std::string> localAddresses() const;
 };
 ```
-**Encoding rule (computed, not remembered).** `features` is emitted as `"0x%X,0x%X"` = `0x<lower32>,0x<upper32>`:
+**Encoding rule (computed, not remembered).** `features` is emitted as `0x<lower32>,0x<upper32>`:
 
-| Profile | Bits set | Emitted string |
+| Profile | Bits set | **Canonical** emitted string |
 |---|---|---|
 | Sprint 1 default (mirroring + audio + RAOP + screen multi-codec) | 7, 9, 30, 42 | `0x40000280,0x400` |
-| If the pairing decision (§11.4) settles on the legacy/PIN profile (bit 27) | 7, 9, 27, 30, 42 | `0x48000280,0x400` |
-| **If §11.4 lands on TRANSIENT (recommended)** | 7, 9, 30, 42, **48** | **`0x40000280,0x10400`** |
+| If §11.4 settled on the legacy/PIN profile (bit 27) — rejected | 7, 9, 27, 30, 42 | `0x48000280,0x400` |
+| **§11.4 = TRANSIENT (adopted)** | 7, 9, 30, 42, **48** | **`0x40000280,0x10400`** |
+
+**DECISION — no zero-padding (§8.1 addendum, closes the gate-1.11 deadlock).** An implementation was found
+emitting `"0x40000280,0x00010400"` — upper half zero-padded to 8 hex digits — while the gate expected
+`"0x40000280,0x10400"`. Measured: the two strings **parse to the same integers**
+(`[1073742464, 66560]`, `numeric equal: True`) and differ **only as text** (`raw-string equal: False`). The
+bits were never wrong.
+
+**Canonical form = the unpadded one.** Rationale: (a) both forms are numerically identical to any conforming
+hex parser, so the *sender* cannot tell them apart — the choice is presentational; (b) the widely-referenced
+open-source receivers emit unpadded `%lx`-style values, and this PRD has cited them as the wire reference;
+(c) the padding as implemented was **asymmetric** (upper padded, lower not), so the emitted string's shape
+varied with the value — a form that changes with the data cannot be a stable equality target.
+
+**And the gate is restated as BOTH, because the two assertions test different things (this is not either/or):**
+1. **Semantic** — parse both sides and compare **integers**. This answers *"are the right bits advertised?"*
+   and can never be broken by formatting.
+2. **Canonical form** — assert the encoder's output equals the canonical constant **exactly**. This answers
+   *"does the encoder emit the agreed form?"* and keeps the wire representation stable and diffable.
+
+General principle to carry forward: **a gate compares semantics, not formatting — unless the formatting is
+itself part of the contract.** When a gate and an encoder disagree, decide which one owns the truth *once*,
+in writing, rather than loosening whichever is easier.
+
+**Two TXT sets — the verifier command must not merge them (correction to the gate instruction).**
+`_airplay._tcp` and `_raop._tcp` carry **different** key sets: `_airplay._tcp` → `deviceid, features, flags,
+pk, pi, srcvers, vv, model, rsf, protovers`; **`md`, `ft`, `am`, `sf` belong to `_raop._tcp`**, whose instance
+name is separately `<MAC-UPPER>@<Name>`. A verifier that requires `md` on `_airplay._tcp` **fails a correct
+implementation** — a gate that is impossible by construction, the same defect class as
+`if-no-files-found: warn`. Verify with two commands:
+```
+dns-sd -B _airplay._tcp                                     # discovery first
+dns-sd -L "<instance>" _airplay._tcp local                  # then resolve + compare TXT
+dns-sd -L "<MAC-UPPER>@<Name>" _raop._tcp local             # separate set, separate instance name
+```
 
 `flags = 0x4`. `_raop._tcp` instance name **must** be `<MAC-UPPERCASE>@<Display Name>` (e.g. `AABBCCDDEEFF@Arakatian PC`).
 
@@ -493,6 +581,22 @@ Window procedure lives on thread T9; **only T7 calls `Present`**.
 
 **Dependencies.** `arak_common`, F2.1.
 
+### 8.7 Open defects that block Sprint 1 gates (current, from local test evidence)
+Recorded here so no one re-derives them, and so no gate is claimed while they are open. Evidence is a local
+`ctest` run (20 cases → **11 passed, 9 failed**, 54 assertions / 45 passed), which is **not** CI evidence and
+must be re-established there.
+
+| # | Defect | Blocks | Note |
+|---|---|---|---|
+| D-1 | **bplist codec: 7 roundtrip failures** (`test_bplist.cpp:24, 41, 56, 74, 91, 125, 141`) | **gate 1.2** — this codec produces the `GET /info` body | Reproduce: `ctest --test-dir build-sprint1 -C Release --output-on-failure`. Straightforward codec bugs; no spec ambiguity |
+| D-2 | **`features` string form** — encoder emitted `0x40000280,0x00010400`, gate expected `0x40000280,0x10400` | gate 1.11 | **RESOLVED by decision (§8.1):** canonical form is unpadded; the gate now checks integers **and** canonical text. Drop the padding in `encodeFeatures`. Bits were never wrong |
+| D-3 | **Advertiser cleanup is a no-op:** `advertiser.cpp` keeps `DNSServiceRef svc` **local**, both call sites have an empty `if (err == 0) { /* store ref */ }`, `fnSockFD`/`fnProcessResult` are loaded but never invoked → `stop()`'s `unregisterService()` does nothing and **a daemon-side refusal is invisible** | **gates 1.2, 1.9** (clean deregistration, no leaks) | The callback never firing means failures cannot surface. Whether the daemon still announces despite a client that never drains its socket is a **measurement**, not an assumption — `dns-sd -B _airplay._tcp` (§8.1) is exactly that measurement. Must be closed before 1.2 is claimed, not before it is tested |
+| D-4 | **Overlay rasteriser deviates from DESIGN.md §5.1** (GDI `TextOutW` instead of DirectWrite) | gate 1.6 | Not a gate change — gate 1.6 tests visible output only. But the current form **cannot composite under flip-model**; the permitted path and the grayscale-AA rule are now in Task 8 items 4–5 |
+| D-5 | **Identity placeholder branch** — before OpenSSL was wired, `identity.cpp` compiled a placeholder random-key path, and `test_identity.cpp` could not detect it | gate 1.12 | **Fixed** (OpenSSL found, `libcrypto` deployed). Kept here because it shows why gate 1.12 must assert a *real* Ed25519 key, not merely a 32-byte hex string |
+
+**Rule this section exists to enforce:** a defect that only a *local* run found is not a closed defect — it is a
+known defect awaiting CI evidence. Gates are decided on CI conclusions and artifacts (§0.4).
+
 ---
 
 ## 9. Task List (ordered; each task starts only after its predecessor's done-criterion is met)
@@ -524,6 +628,36 @@ Prereq: Task 0.
    anything while the *parent directory* is excluded. Net effect: a clean checkout that cannot configure,
    i.e. gate 1.1 failing for a reason nobody would think to look for. **Keep the scoped `third_party/ffmpeg/`
    form** and leave a comment in `.gitignore` saying why, so this is not "fixed" a fourth time.
+   **Measured state today** (`git check-ignore -v`, this repo): `.gitignore` has **no `third_party` rule at
+   all`, and `third_party/mDNSResponder/include/dns_sd.h` exits **1 = not ignored** — i.e. the vendored header
+   *would* be committed today, which is correct. But that same absence also means the BtbN fallback headers
+   *would* be committed, which is not. **Both halves of the fix must be tested, not just the feared half:**
+   ```
+   git check-ignore -v third_party/mDNSResponder/include/dns_sd.h   # MUST exit 1 (committable)
+   git check-ignore -v third_party/ffmpeg/include/avcodec.h         # MUST exit 0 (ignored)
+   ```
+   **🔴 MEASURED REGRESSION — round 5 closed the wrong half.** The committed `.gitignore` now reads
+   `third_party/*` + `!third_party/README.md`. Measured with `git check-ignore` **and** a scratch repo carrying
+   the same file:
+   | Path | Result | Required |
+   |---|---|---|
+   | `third_party/mDNSResponder/include/dns_sd.h` (vendored, must ship) | **IGNORED** ❌ | committable |
+   | `third_party/ffmpeg/include/avcodec.h` (fetched, must not ship) | IGNORED ✅ | ignored |
+   | `third_party/README.md` | committable ✅ | committable |
+   A scratch `git status --porcelain -uall` shows only `.gitignore` and `third_party/README.md` — the vendored
+   header is **invisible**. So the BtbN hole was closed by opening the `dns_sd.h` hole: exactly the
+   "green but hollow" class. **`!third_party/README.md` is not enough; there is no negation for the directory
+   that matters.**
+   **Fix, verified two-sided in scratch repos — use the 1-line scoped form:**
+   ```
+   third_party/ffmpeg/          # ← ONLY this. Both candidates below were tested and pass
+   ```
+   | Pattern | `dns_sd.h` | `avcodec.h` | `README.md` |
+   |---|---|---|---|
+   | `third_party/ffmpeg/` (**recommended — 1 line**) | committable ✅ | ignored ✅ | committable ✅ |
+   | `third_party/*` + `!third_party/README.md` + `!third_party/mDNSResponder/` | committable ✅ | ignored ✅ | committable ✅ |
+   Both work; the scoped form needs no negation to maintain. **Acceptance test = both sides, and the second
+   one is the one that keeps getting skipped:** `dns_sd.h` **committable** *and* `avcodec.h` **ignored**.
 2. Create `LICENSE` (Apache-2.0) and `NOTICE` (third-party licences + provenance, listing vcpkg deps and the "reference-only, no GPL code" rule).
 3. First commit of the docs + skeleton; add the remote.
 **DONE:** `git log --oneline` shows ≥1 commit; `git status` clean; `git ls-files` contains `docs/architecture/ARCHITECTURE-BRIEF.md` and `docs/prd/PRD-AIRPLAY-SPRINT1.md`; a remote is configured and pushed — **this is gate 1.10**, and gate 1.1 is unevaluable without it.
@@ -544,7 +678,11 @@ Prereq: Task 2.
 1. `.github/workflows/ci.yml`: `windows-latest`, vcpkg binary cache, `ilammy/msvc-dev-cmd@v1`, use the **runner's preinstalled vcpkg** (`$env:VCPKG_INSTALLATION_ROOT`) instead of cloning a second copy, configure with **`-G "Visual Studio 17 2022"`** — or `-G Ninja` + `-DCMAKE_BUILD_TYPE=Release` — **never** `"Visual Studio 18 2026"` — then build, `ctest`, upload artifact. **On the VS generator do NOT pass `-DCMAKE_BUILD_TYPE`** (§0.1): it is a no-op there and its presence implies a setting that never applied.
 2. `.github/workflows/license-scan.yml`: fail if a GPL/AGPL header appears under `src/` or `third_party/`.
 3. `tests/unit/` with one passing Catch2 test registered in `ctest` (so `ctest` is not a no-op).
-**DONE:** a clean-checkout CI run is green and the artifact is uploaded. This is gate 1.1 — paste the run URL into your handoff.
+4. **`upload-artifact` must carry `if-no-files-found: error`** (§0.9 R-E) — its default is `warn`, which lets an empty artifact pass as `success`.
+5. **The `toolchain facts` step is permanent** (§0.9 R-D). It must print CMake version, `vswhere` installation paths, `cl.exe` location and the runner's vcpkg baseline. Never delete or "tidy" it.
+6. Confirm §0.9 R-A/R-B/R-C are all satisfied in the committed workflow before you claim the gate.
+
+**DONE:** a clean-checkout CI run reports `conclusion: success`, **and** the `airplay-receiver-win64` artifact downloads and is shown to contain a real `.exe` (not merely a green checkmark). This is gate 1.1 — paste the run URL **and** the artifact listing into your handoff.
 **DO NOT:** hardcode a generator you have not seen on the runner; do not add a release/installer job (Sprint 4).
 
 ### Task 4 — `arak_common` (gates 1.4, 1.7, 1.9)
@@ -587,6 +725,17 @@ Prereq: Task 4.
 1. `src/ui/win32/`: window, D3D11 device, DXGI flip-model swap chain, solid-colour present loop, FPS/status overlay, ESC/Alt+F4 quit.
 2. `IVideoRenderer` per brief §5.5; thread T9 (wndproc) separate from T7 (present, owns `Present`).
 3. `RenderStats` logged once per second by T10.
+4. **Overlay must terminate as a D3D11 resource (§8 amendment, @ui-designer).** Drawing GDI text straight onto
+   the HWND/back buffer **cannot composite under a flip-model swap chain** (`IDXGISurface1::GetDC` is
+   unsupported there, and brief §3 mandates flip-model) → flicker, erased-on-`Present`, or never drawn. The
+   permitted path is `CreateDIBSection` → `UpdateSubresource` into a D3D11 texture, drawn by **T7** as a quad
+   (one upload per second, no shader work). **Invariant: T7 is the only thread that calls `Present`, and the
+   overlay must end its life as a D3D11 resource.** DirectWrite is a *recommendation* in DESIGN.md §5.1, not a
+   gate requirement — gate 1.6 tests visible output (overlay present, `fps ≥ 60`, clean exit), not the rasteriser.
+5. **Overlay text uses grayscale AA only — ClearType is forbidden.** The overlay card is ~78 % translucent and
+   subpixel AA assumes an opaque background, so ClearType would fringe coloured edges over video in Sprint 2.
+   Under GDI this means the `GGO_GRAY8_BITMAP` rendering hint, and it forces the DIB to be **32-bit BGRA with
+   a real alpha channel** — a 24-bit opaque DIB is not acceptable.
 **DONE:** 5-second sample shows `fps ≥ 60`; presented count monotonic; ESC and Alt+F4 both exit 0 through the shutdown order; measured numbers recorded.
 **DO NOT:** add the NV12 shader/video texture path or audio-clock pacing (Sprint 2/3).
 
@@ -611,8 +760,8 @@ Prereq: all above.
 
 ## 10. Gate checklist (@reviewer, Sprint 1)
 
-- [ ] **1.1** Clean-checkout CI green on `windows-latest`, artifact uploaded — with the **VS17 2022/Ninja** generator (§0.1), not VS18.
-- [ ] **1.2** `_airplay._tcp` + `_raop._tcp` advertised, TXT keys per brief §1.2, seen by **two independent observers**; verified with the **system** `dns-sd.exe` (§0.7); a real registration is proven, not a successful `LoadLibrary`.
+- [ ] **1.1** Clean-checkout CI green on `windows-latest` **with the artifact actually uploaded**. Generator = **`Visual Studio 18 2026`** (§0.1, Rev 5 — the runner is VS 18; VS 17 2022 does not exist there and Ninja is not on the runner's PATH). **Half of this gate is already proven** and should be recorded as such: two runs reached `conclusion: success` through configure → build → `ctest`, so *"the repo builds on CI from a clean checkout"* has empirical support. What was **not** true was the artifact: `gh api …/actions/artifacts --jq .total_count` returned **`0`** across two green runs — a false-green, now guarded by `if-no-files-found: error` and the pinned output directory (§0.9 R-A). **Met only when a completed run reports `success` AND the artifact downloads containing a real `.exe`.**
+- [ ] **1.2** `_airplay._tcp` + `_raop._tcp` advertised, each with **its own** TXT key set (they are not the same list — §8.1), seen by **two independent observers**; verified with the **system** `dns-sd.exe` (§0.7); a real registration is proven, not a successful `LoadLibrary`. Baseline before we publish is clean: **no** `_airplay._tcp`/`_raop._tcp` instance exists on this network, so our own appearance is unambiguous evidence.
 - [ ] **1.3** MacBook sees the PC as a screen-mirroring target (screenshot + protocol-notes entry) **and** `netstat -ano` proves our PID does **not** own `:5353` (§0.7).
 - [ ] **1.4** `GET /info` → 200 + valid bplist (`name, deviceID, macAddress, model, sourceVersion, features, statusFlags`); canned-request unit test exists.
 - [ ] **1.5** `/pair-setup`, `/pair-verify`, `/fp-setup`, malformed requests → documented errors; process survives (integration test).
@@ -621,7 +770,7 @@ Prereq: all above.
 - [ ] **1.8** Bind failure → actionable log + non-zero exit code.
 - [ ] **1.9** §4.4 shutdown order; 10 cycles → zero leaked handles; 3 s watchdog proven.
 - [ ] **1.10** First commit + remote + push exist; a clean-checkout `ci.yml` run is green and its URL is quoted (repo was at 0 commits — this gate is unevaluable until it does).
-- [ ] **1.11** The advertised pairing bits match the implemented profile (§11.4) — mask, `advertise_pk`, and TXT agree; no capability is promised that Sprint 2 will not deliver.
+- [ ] **1.11** Advertised pairing bits match the implemented profile (§11.4). **Two-part check, both required:** (i) **numeric equality** — TXT `features` parsed as integers equals the intended bitmask; (ii) **canonical form** — the encoder's output equals `0x40000280,0x10400` exactly. Also: `advertise_pk` and the TXT agree, no capability is promised that Sprint 2 will not deliver (R14), and the two TXT sets are checked with their own commands (§8.1).
 - [ ] **1.12** The Ed25519 identity (`pk`/`pi`/`psi`) is persisted and identical across two runs.
 - [ ] **§0.1** `ci.yml` uses the correct generator; brief §6.3 patched by @architect (or PRD normatively overrides it).
 - [ ] **§4.2** Nothing from the deferred list is present in the diff.
