@@ -11,37 +11,39 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
 
-      # Discover what's actually on the runner (don't guess).
+      # "Print, don't infer" (brief v3.4): never guess the runner's toolchain.
+      # This step is permanent - it is the only reason we know windows-latest ships
+      # VS 18 Enterprise (18.0 / MSVC 14.51.36231) and CMake 4.4.3, not VS 17 2022.
       - name: toolchain facts
         shell: pwsh
         run: |
           cmake --version
           & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -all -prerelease -property installationPath
           where.exe cl.exe
+          echo "vcpkg baseline:"
+          git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD
 
-      # vcpkg classic mode: install packages before cmake configure.
-      # CRITICAL: run from a temp dir (not repo root) so vcpkg doesn't
-      # detect vcpkg.json and enter manifest mode, which needs a baseline
-      # that doesn't exist in the runner's shallow clone.
-      - name: install deps
-        shell: pwsh
-        working-directory: ${{ runner.temp }}
-        run: |
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg" install catch2 spdlog openssl:x64-windows
-
-      # Configure: use Ninja (single-config, fast) with the vcpkg toolchain
-      # pointing at classic-mode installed packages.
+      # MANIFEST MODE: vcpkg.json is the single source of truth for dependencies.
+      # Do not install packages from a temp dir in classic mode - that makes CI ignore
+      # vcpkg.json entirely (two sources of truth, features mdns/video invisible).
+      # No builtin-baseline on purpose: the runner's vcpkg has no commit from our local
+      # clone, and pinning one killed the install in ~25 s (run 35011478579).
       - name: configure
+        shell: pwsh
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_MANIFEST_MODE=OFF
-
+          cmake -S . -B build -G "Visual Studio 18 2026" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+      # NO -DCMAKE_BUILD_TYPE: the VS generator is multi-config and that variable is a
+      # proven no-op (@code-executor measured it: absent from CMakeCache.txt).
+      # The configuration comes from --config Release on build/test below.
+      # Build dir stays IN the repo (build/), never %TEMP% - MSB8029 breaks incremental builds.
       - name: build
         run: cmake --build build --config Release --parallel
 
       - name: test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      # Artifact path is BOUND to the generator: VS is multi-config -> build/Release/*.exe.
+      # (With -G Ninja this would have to be build/*.exe; green build + empty artifact is a lie.)
       - uses: actions/upload-artifact@v4
         with: { name: airplay-receiver-win64, path: build/Release/*.exe }
