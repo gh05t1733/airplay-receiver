@@ -5,6 +5,12 @@
 > findings from @reviewer (1 blocker + 4 advisory), and the toolchain audit from @deployer.
 > Downstream: @ui-designer (DESIGN.md) → @code-executor (Task List §9) → @reviewer (gate §10).
 > Licence target: Apache-2.0. Sprint 1 window: weeks 1–2 (express as a **gate sequence**, not a calendar — see §5.4).
+> **Rev 3 (2026-09-16):** mDNS daemon contract added (§0.7) after three independent measurements; FFmpeg
+> removed from the Sprint 1 critical path; gate 1.10 evidence now exists (pushed + CI triggered);
+> the `.gitignore` trap that would silently break a fresh clone is documented in Task 1.
+> **Rev 4 (2026-09-16):** CI run #1 came back **RED** and the root cause was read from the raw log — CMake's
+> VS generator finds **no Visual Studio instance** on the runner, so **Path B (`-G Ninja`) becomes mandatory
+> in CI** (§0.1) and the artifact path must change with it (§0.8). Gates 1.1/1.10 are **not met**.
 
 ---
 
@@ -24,16 +30,25 @@ machine's VS 18 (v14.51) is *local only*.
 | **CI (`ci.yml`)** | `-G "Visual Studio 17 2022"` — or `-G Ninja` (Ninja is preinstalled on the runner) |
 | **Local dev (this box)** | `-G "Visual Studio 18 2026"` — confirm the exact string with `cmake --help` **after** CMake is installed; never hardcode from memory |
 
-**STATUS: RESOLVED 2026-09-16.** @architect patched brief §6.3 to `-G "Visual Studio 17 2022"` plus a
-two-path note in §3 (brief now 920 lines / 67,941 bytes); @deployer proved the local string by running
-`cmake --help` — `Visual Studio 18 2026` exists **only on this box** (and is the local default), while the
-runner has VS 17 2022 only; @reviewer re-verified both to disk. **This PRD stays normative for `ci.yml`
-content.** The two paths, and nothing in between:
+**STATUS: REVISED AGAIN 2026-09-16 — Path B (Ninja) is now REQUIRED in CI, because Path A was tried and
+failed empirically.** The brief patch itself was correct and is landed; what was wrong is the *default choice*
+inside it. CI run #1 (§0.8) died with:
 
-| Path | Configure | Notes |
+```
+CMake Error at CMakeLists.txt:3 (project):
+  Generator  Visual Studio 17 2022  could not find any instance of Visual Studio.
+```
+
+So "the runner has VS 2022" is not the operative fact — CMake's VS generator resolves a *VS instance* through
+vswhere and finds **none** on this runner. Meanwhile `ilammy/msvc-dev-cmd@v1` had already produced a working
+MSVC environment in that same job, which is precisely the precondition Path B needs. **Do not re-litigate
+this with documentation; the log is the evidence.**
+
+| Path | Configure | Verdict |
 |---|---|---|
-| **A — default** | `-G "Visual Studio 17 2022" -A x64` | Multi-config; `--config Release` is what selects the build type |
-| **B — faster here** | `-G Ninja` + `-DCMAKE_BUILD_TYPE=Release` | Single-config; **requires an MSVC environment** (`ilammy/msvc-dev-cmd@v1` in CI, `vcvars64.bat` locally) |
+| **B — REQUIRED in CI** | `-G Ninja` + `-DCMAKE_BUILD_TYPE=Release` | Single-config, so `CMAKE_BUILD_TYPE` is **required and meaningful**; needs an MSVC environment, which `ilammy/msvc-dev-cmd@v1` supplies (already a step) |
+| **A — do NOT use on this runner** | `-G "Visual Studio 17 2022" -A x64` | Multi-config; **empirically unavailable** on `windows-latest` (§0.8). Also `-DCMAKE_BUILD_TYPE` is a no-op under a VS generator |
+| Local dev only | `-G "Visual Studio 18 2026"` | Exists **only** on this box — proved by @deployer with `cmake --help` |
 
 **Correction folded in (@reviewer nit, proven by @code-executor):** the brief's `ci.yml` passes
 `-DCMAKE_BUILD_TYPE=Release` while using a **multi-config** generator, where that variable is a **no-op**.
@@ -74,18 +89,77 @@ on a clean-checkout CI run with an uploaded artifact.
 | vcpkg | ✅ done | `2026-07-27-98d7cb0c` at **`C:/dev/vcpkg`** — deliberately **outside** the repo |
 | Disk guard | ✅ set | `VCPKG_BINARY_SOURCES=clear;files,%LOCALAPPDATA%\vcpkg\archives,readwrite` + `VCPKG_DISABLE_METRICS=1` in `HKCU\Environment` |
 | MSVC + Windows SDK | ✅ present | `cl.exe` 14.51.36231, SDK 10.0.26100.0 — never was the blocker |
-| **FFmpeg dev (headers + libs)** | ❌ **still missing** | the installed gyan build is bin-only. This is now the **first thing that blocks** Sprint 1 code |
-| First commit / remote / `ci.yml` | ❌ not done | repo is still **0 commits** on `master`; `.github/workflows/` is empty |
+| **Bonjour / mDNS** | ✅ **installed AND RUNNING** | `Bonjour Service` is up; `mDNSResponder.exe` owns `192.168.1.14:5353` and three further PIDs hold `0.0.0.0:5353`; `dns-sd.exe` + `dnssd.dll` are in `System32`; `dns_sd.h` is **absent** and must be vendored — see §0.7 |
+| **FFmpeg dev (headers + libs)** | ⏸️ **NOT a Sprint 1 blocker** — my Rev-2 call was wrong | the installed gyan build is bin-only, but @architect gated FFmpeg behind the opt-in vcpkg feature `video`, so Sprint 1's default set is only `openssl + spdlog + catch2`. Gate 1.1 no longer waits on an FFmpeg build. The RAM/disk cost is **deferred, not solved** — gate 2.0 meets it |
+| First commit / remote / `ci.yml` | ✅ pushed, 🔴 **run RED** | pushed to `github.com/gh05t1733/airplay-receiver`, branch `main`, commit `5d0b57d5`, 26 files, no junk. `ci.yml` triggered and **failed at configure** — root cause and the exact 5-line fix are in §0.8 |
 
 **Correction to Task 0 below:** the vcpkg root is **`C:/dev/vcpkg`**, not `C:/vcpkg` — keeping vcpkg out of the
 repo means `.gitignore` needs no special-casing.
-**Remaining Task 0 work:** FFmpeg dev through the vcpkg manifest, then Task 1's first commit + push.
-**Gates 1.1 and 1.10 cannot be evaluated until those exist** — that is a fact, not a status preference.
+**Remaining Task 0 work:** nothing that blocks. First commit + push are **done**; FFmpeg dev is deferred to
+Sprint 2 behind the `video` feature.
+**Gates 1.1 and 1.10 are now evaluable — and the first evaluation came back RED** (§0.8): the vcpkg dependency
+half **passed** (11 min, full default set), and configure then failed on VS-generator discovery. A *local*
+`vcpkg` build on this box was killed three times by the harness (`exit_code -15`), so **no local result counts
+as evidence** (§0.4) and the CI log is the sole authority.
 
 ### 0.6 Unverified claims are not evidence
 Nothing in Sprint 1 is "done" until its gate names a concrete artifact: a CI run URL, a `dns-sd` transcript,
 a captured request/response, a `RenderStats` sample, a file path with content, or an exit code. Every handoff
 must separate **proven** from **not yet proven**.
+
+### 0.7 mDNS reality on this machine — measured, and it changes the design (Rev 3)
+Measured independently three times (by @foundry, @architect and @reviewer — and they agree):
+
+| Fact | Consequence |
+|---|---|
+| `Bonjour Service` **RUNNING**; `mDNSResponder.exe` owns `192.168.1.14:5353` and **three further PIDs** hold `0.0.0.0:5353` | **UDP 5353 is already owned.** A responder of ours that binds it picks a fight with a live system daemon — and gate 1.3 lives or dies on that |
+| `dns-sd.exe` (96,104 B) and `dnssd.dll` (85,864 B) exist in `System32` | The gate 1.2 / 1.11 verifier is **free**. Do **not** build the vcpkg `dns-sd` CLI — it fails `RC1015 afxres.h` because VS 18 BuildTools ships no `atlmfc` (measured by @architect, confirmed by @reviewer) |
+| `dns_sd.h` is **absent**; no Bonjour SDK installed | The header must be vendored into `third_party/mDNSResponder/include/`. It is **Apache-2.0**, so it may be committed — subject to the `.gitignore` rule in Task 1 |
+| Bonjour is a **runtime dependency** of the shipped app | Sprint 4's installer owes an end-user story (detect + instruct, or bundle **after** checking Apple's redistribution terms). Gate 4.3 / C19 — not a Sprint 1 concern |
+
+**Normative contract — @code-executor must not improvise here:**
+1. **Advertise through a daemon client API** (`DNSServiceRegister` family). Never bind 5353 while a daemon
+   holds it. Our process must be able to show at gate 1.3 that **its own PID does not own `:5353`**.
+2. **Header and library come from the same source.** Prefer the vcpkg-built `mdnsresponder` pair (matching
+   header + `dnssd.lib`). The system `dnssd.dll` is a **2011 Bonjour 3.x** build while the vendored header is
+   mDNSResponder **1557.x** — different eras. `DNSServiceRegister` is stable across that gap, but a header↔DLL
+   mismatch is precisely how TXT/flags bugs go silent (R15). If dynamic-loading the system DLL is chosen
+   anyway, the chosen header version must be recorded **and** gate 1.2 must prove a real registration
+   (`dns-sd -B _airplay._tcp`) — not merely a successful `LoadLibrary`.
+3. **The hand-rolled responder is a daemon-less-host fallback only** — never a way to dodge a library that is
+   inconvenient. Where a daemon exists it is **forbidden**; where none exists, it **must** be the owner of 5353.
+
+### 0.8 CI run #1 — RED. Root cause from the raw log, and the exact fix
+Read by @prd-maker with `gh run view 35007094126 --log-failed` (raw log, not a summary). Run URL:
+https://github.com/gh05t1733/airplay-receiver/actions/runs/35007094126 · `headSha 5d0b57d51fe2df7870127e30cad7d9c1d04e61cb` · workflow `ci` · 11m53s · conclusion **failure**.
+
+| Step | Result |
+|---|---|
+| `Set up job`, `actions/checkout@v4`, `ilammy/msvc-dev-cmd@v1` | ✅ |
+| vcpkg install — the Sprint 1 default set (`openssl` + `spdlog` + `catch2`) | ✅ **succeeded in 11 min** on a cold cache; FFmpeg was never built, so the feature gating worked exactly as intended |
+| **`cmake … -G "Visual Studio 17 2022"`** | ❌ **exit 1** — `Generator "Visual Studio 17 2022" could not find any instance of Visual Studio.` |
+| build / ctest / upload-artifact | ⏭️ never ran |
+
+**What this proves, so nobody has to guess again:**
+1. **The dependency half of gate 1.1 is already satisfied** — vcpkg resolved and built the entire Sprint 1
+   default dependency set on the runner, cold, in 11 minutes.
+2. **The failure is toolchain discovery, not code.** Nothing has been compiled yet, so no source-level defect
+   is implicated. The `LNK2019`/`ctest`/Catch2 concerns raised earlier are still untested, not disproven.
+3. **`windows-latest` + CMake's VS generator = unavailable.** Treat any future claim to the contrary as
+   requiring a raw log.
+
+**The fix — `.github/workflows/ci.yml`, and only these lines:**
+
+| Line | Change |
+|---|---|
+| 20 | `-G "Visual Studio 17 2022" -A x64` → **`-G Ninja`**, and add **`-DCMAKE_BUILD_TYPE=Release`** |
+| 22–25 | Replace the multi-config comment: Ninja is single-config, so `CMAKE_BUILD_TYPE` is required and meaningful; vcvars is supplied by `ilammy/msvc-dev-cmd@v1` (already a step) |
+| 27 | `cmake --build build --config Release --parallel` → `cmake --build build --parallel` |
+| 28 | `ctest --test-dir build -C Release --output-on-failure` → `ctest --test-dir build --output-on-failure` |
+| 30 | **`path: build/Release/*.exe` → `build/*.exe`** — ⚠️ under a single-config generator the exe does **not** land in `Release/`. Leaving this line alone turns a green build into a **silently missing artifact**, and gate 1.1 requires the artifact to be uploaded |
+
+**Gates 1.1 and 1.10: NOT MET.** A red run is red. The "push + trigger" half of 1.10 is satisfied; the
+"clean-checkout CI green **with artifact**" half is not. Re-run after the 5-line change and quote the new URL.
 
 ---
 
@@ -156,7 +230,9 @@ window with a measurable frame loop and a clean shutdown. **Sprint 1 does not pr
 - **`CoreBridge` named-pipe client** → interface + schema exist; no UI client in Sprint 1.
 - **WPF/Tauri client** → Sprint 3+, and only if the .NET SDK decision is funded (no SDK on this box).
 - **Tray + hotkeys, settings UI** → Sprint 3.
-- **Installer (Inno Setup), firewall rules, release job** → Sprint 4.
+- **Installer (Inno Setup), firewall rules, release job** → Sprint 4 — plus a new item: the **Bonjour runtime
+  dependency for end users** (detect + instruct, or bundle **after** checking Apple's redistribution terms;
+  gate 4.3 / C19). Whether to bundle is an installer decision, not a detail.
 - **4K, multi-room, PTP timing, buffered audio, HomeKit, HLS relay** → out of v1.0.
 
 ### 4.3 Non-Goals
@@ -194,6 +270,8 @@ artifact. If a gate slips, the schedule moves; the gate does not.
 | ID | Risk | Impact | Mitigation |
 |---|---|---|---|
 | **R14** | Advertising `pk`/`pi` before pairing exists makes the sender attempt a pairing we cannot complete, producing a misleading failure that looks like a bug | Medium | Identity is generated + persisted in Sprint 1, but **`advertise_pk` defaults OFF**; flipping it on is a Sprint 2 task coupled to `IPairingManager` (§8.2) |
+| **R15** | **Header↔DLL era mismatch:** the system `dnssd.dll` is a 2011 Bonjour 3.x build while the vendored `dns_sd.h` is mDNSResponder 1557.x. The API is stable, but TXT/flags bugs across that seam go **silent** | Medium | Header and library from the same source (prefer the vcpkg pair). If the system DLL is dynamic-loaded anyway, record the header version **and** require a real registration at gate 1.2 (§0.7) |
+| **R16** | Our process binding UDP 5353 while the resident Bonjour daemon owns it → flaky or failed advertisement (gate 1.3) and a fight with a system service | **High** | Advertise via the daemon client API; never bind 5353 while a daemon holds it (§0.7 contract 1). The hand-rolled responder is permitted **only** on a daemon-less host |
 
 ### 5.4 Open decisions (user)
 See §11 — four items, two of which are already recommendations from @architect/@reviewer.
@@ -316,9 +394,15 @@ class IAdvertiser {
 - **G** config changes the display name; **W** `update()` is called; **T** the new name is resolvable within 5 s and the old instance is gone.
 - **G** the app is shutting down; **W** `stop()` runs; **T** a re-browse finds nothing (clean deregistration, no ghost entry).
 - **Edge** the host has a VPN/Hyper-V vSwitch; **W** the interface hint selects the LAN adapter; **T** the log lists exactly which addresses were advertised, and the Mac sees only the LAN one.
+- **G** the app is advertising on a box where Bonjour already runs; **W** `netstat -ano` is filtered for `:5353`; **T** **our PID is not among the owners** — we registered through the daemon instead (§0.7; this is gate 1.3 evidence).
 
-**Dependencies.** Task 0 (vcpkg + mDNSResponder port), F1.2 identity.
-**Implementation note.** Wrap mDNSResponder behind `IAdvertiser` so the hand-rolled RFC 6762/6763 responder can be swapped in (R4 plan B) without touching the rest. `update()` must be the only path that mutates registration — no ad-hoc re-registration from config code.
+**Dependencies.** Task 0 (vcpkg), F1.2 identity.
+**Implementation note — superseded by §0.7 (Rev 3).** `IAdvertiser` registers **through the Bonjour daemon's
+client API**; the process must never bind 5353 while a daemon holds it. The hand-rolled RFC 6762/6763 responder
+is the fallback **only** on a host with no daemon, and there it owns 5353. Wrap whichever implementation is used
+behind `IAdvertiser` so the swap touches nothing else — that abstraction is what keeps R4 survivable.
+`update()` is the only path that mutates registration; no ad-hoc re-registration from config code.
+Verification uses the **system** `C:\Windows\System32\dns-sd.exe` (§0.7).
 
 ### 8.2 F1.2 — Receiver identity, incl. Ed25519 generated in Sprint 1 (advisory 2)
 
@@ -422,10 +506,10 @@ Prereq: none. Steps 1–3 are **already executed and verified** (§0.5) — do n
 1. ~~CMake~~ ✅ done — `cmake version 4.4.3`.
 2. ~~vcpkg~~ ✅ done at **`C:/dev/vcpkg`** (correction: **not** `C:/vcpkg`).
 3. ~~Ninja~~ ✅ done — `1.13.2`.
-4. **FFmpeg dev — REMAINING.** Do **not** install a binary-only build. Declare `vcpkg.json` (Task 2) with `ffmpeg[avcodec,avformat,swscale,swresample,nvcodec]`, `mdnsresponder`, `openssl`, `spdlog`, `catch2`, then run `C:/dev/vcpkg/vcpkg.exe install --triplet x64-windows --clean-after-build`.
+4. **Dependencies — CORRECTED (Rev 3).** Sprint 1's **default** set is only `openssl + spdlog + catch2`. FFmpeg sits behind the **opt-in feature `video`** and mDNSResponder behind **`mdns`** (both default OFF), with `AIRPLAY_ENABLE_FFMPEG=OFF`. Run `C:/dev/vcpkg/vcpkg.exe install --triplet x64-windows --clean-after-build`. Do **not** install a binary-only FFmpeg ever; when the `video` feature is actually used it comes from the manifest or the BtbN **lgpl**-shared fallback.
 5. Local generator string is **already confirmed by probe** (`cmake --help`): `Visual Studio 18 2026` is the local default; the runner has VS 17 2022 only. No guessing required.
 
-**DONE:** `cmake --version` / `vcpkg version` / `ninja --version` exit 0 (✅ already true); then the vcpkg install completes and `vcpkg list` shows ffmpeg + mdnsresponder + openssl + spdlog + catch2.
+**DONE:** `cmake --version` / `vcpkg version` / `ninja --version` exit 0 (✅ already true); then the vcpkg install completes and `vcpkg list` shows `openssl` + `spdlog` + `catch2` — the Sprint 1 default set. FFmpeg/mdnsresponder appear only when their features are enabled.
 **DISK GUARD (mandatory — C: had ~38 GB free):** keep `VCPKG_BINARY_SOURCES=clear;files,%LOCALAPPDATA%\vcpkg\archives,readwrite` set and build with `--clean-after-build`. A source build of `ffmpeg[nvcodec]` + `openssl` + `mdnsresponder` can otherwise eat 8–15 GB of buildtrees.
 **PLAN B if vcpkg FFmpeg-dev is too slow or too heavy:** `BtbN ffmpeg-master-latest-win64-**lgpl**-shared` into `third_party/ffmpeg/` (gitignored, fetched by `scripts/`), wired via `-DAIRPLAY_FFMPEG_ROOT=`. Use **lgpl, not gpl** — a gpl build cannot be redistributed in our Apache-2.0 installer.
 **DO NOT:** try to link the installed gyan FFmpeg; commit `build/`, `dist/`, `third_party/ffmpeg/`, or `vcpkg_installed/`.
@@ -433,6 +517,13 @@ Prereq: none. Steps 1–3 are **already executed and verified** (§0.5) — do n
 ### Task 1 — Repo baseline + first commit (advisory 4 / gates 1.1, **1.10**)
 Prereq: Task 0.
 1. Audit `.gitignore`: must cover `build/`, `dist/`, `third_party/ffmpeg/`, `*.user`, `vcpkg_installed/`.
+   **⚠️ NEVER use a blanket `third_party/` — measured with git by @ui-designer and it breaks a fresh clone.**
+   `third_party/mDNSResponder/include/dns_sd.h` is **vendored and MUST be committed** (§0.7), while
+   `third_party/ffmpeg/` is fetched and **MUST be ignored**. A blanket `third_party/` silently drops the
+   vendored header, and the obvious rescue `!third_party/README.md` **does not work** — git cannot re-include
+   anything while the *parent directory* is excluded. Net effect: a clean checkout that cannot configure,
+   i.e. gate 1.1 failing for a reason nobody would think to look for. **Keep the scoped `third_party/ffmpeg/`
+   form** and leave a comment in `.gitignore` saying why, so this is not "fixed" a fourth time.
 2. Create `LICENSE` (Apache-2.0) and `NOTICE` (third-party licences + provenance, listing vcpkg deps and the "reference-only, no GPL code" rule).
 3. First commit of the docs + skeleton; add the remote.
 **DONE:** `git log --oneline` shows ≥1 commit; `git status` clean; `git ls-files` contains `docs/architecture/ARCHITECTURE-BRIEF.md` and `docs/prd/PRD-AIRPLAY-SPRINT1.md`; a remote is configured and pushed — **this is gate 1.10**, and gate 1.1 is unevaluable without it.
@@ -483,10 +574,11 @@ Prereq: Task 5.
 
 ### Task 7 — Advertiser + identity (gates 1.2, 1.3, **1.11**, **1.12**)
 Prereq: Task 6 (so the advertised SRV port is the real bound port).
-1. `src/core/discovery/`: `IAdvertiser` + mDNSResponder wrapper; TXT/SRV builders for both services; `_raop` instance `<MAC-UPPER>@<Name>`.
-2. Identity: `deviceid` from the adapter MAC; Ed25519 keypair + `pairingId`/`systemPairingId` generated and persisted (§8.2); `advertise_pk` default `false`.
-3. Interface selection + advertised-address logging.
-**DONE:** (a) `dns-sd -B _airplay._tcp` from the Mac **and** a `python-zeroconf` browse on Windows both see both services with the §1.2 TXT keys; (b) gate 1.3 screenshot captured and referenced in `docs/architecture/protocol-notes.md`; (c) identity is identical across two runs.
+1. `src/core/discovery/`: `IAdvertiser` — register **through the Bonjour daemon client API** (`DNSServiceRegister` family). **Never bind 5353 while a daemon holds it** (§0.7). Vendor `dns_sd.h` (Apache-2.0) into `third_party/mDNSResponder/include/` and **commit it** (Task 1 rule). Prefer the **vcpkg-built header + `dnssd.lib` pair**; if you dynamic-load the system `dnssd.dll` instead, record the header version and prove a real registration at gate 1.2 (R15).
+2. TXT/SRV builders for both services; `_raop` instance name `<MAC-UPPER>@<Name>`; `update()` as the only mutation path.
+3. Identity: `deviceid` from the adapter MAC; Ed25519 keypair + `pairingId`/`systemPairingId` generated and persisted (§8.2); `advertise_pk` default `false`. The advertised pairing bits must match §11.4 — that is gate 1.11.
+4. Interface selection + advertised-address logging.
+**DONE:** (a) `dns-sd -B _airplay._tcp` from the Mac **and** a `python-zeroconf` browse on Windows both see both services with the §1.2 TXT keys — plus an equality check of TXT vs the code constants using the **system** `C:\Windows\System32\dns-sd.exe` (no vcpkg CLI build); (b) gate 1.3 screenshot + a `netstat -ano` capture proving **our PID is not a `:5353` owner**; (c) identity identical across two runs.
 **DO NOT:** implement pairing handshake; do not add mDNS *browsing* (brief §1.1 says we advertise, not browse).
 **Gate 1.11 is a consistency gate, not a feature gate:** the advertised pairing bits must match what Sprint 2 will actually implement — an advert that promises a capability we do not implement is a lie, and that failure mode looks like a bug to the user (R14). **Gate 1.12:** the Ed25519 identity must be byte-identical across two runs.
 
@@ -520,8 +612,8 @@ Prereq: all above.
 ## 10. Gate checklist (@reviewer, Sprint 1)
 
 - [ ] **1.1** Clean-checkout CI green on `windows-latest`, artifact uploaded — with the **VS17 2022/Ninja** generator (§0.1), not VS18.
-- [ ] **1.2** `_airplay._tcp` + `_raop._tcp` advertised, TXT keys per brief §1.2, seen by **two independent observers**.
-- [ ] **1.3** MacBook sees the PC as a screen-mirroring target (screenshot + protocol-notes entry).
+- [ ] **1.2** `_airplay._tcp` + `_raop._tcp` advertised, TXT keys per brief §1.2, seen by **two independent observers**; verified with the **system** `dns-sd.exe` (§0.7); a real registration is proven, not a successful `LoadLibrary`.
+- [ ] **1.3** MacBook sees the PC as a screen-mirroring target (screenshot + protocol-notes entry) **and** `netstat -ano` proves our PID does **not** own `:5353` (§0.7).
 - [ ] **1.4** `GET /info` → 200 + valid bplist (`name, deviceID, macAddress, model, sourceVersion, features, statusFlags`); canned-request unit test exists.
 - [ ] **1.5** `/pair-setup`, `/pair-verify`, `/fp-setup`, malformed requests → documented errors; process survives (integration test).
 - [ ] **1.6** Window `fps ≥ 60`, overlay present, ESC/Alt+F4 exit 0.
