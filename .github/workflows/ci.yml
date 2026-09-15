@@ -3,46 +3,40 @@ on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: windows-latest           # CMake 3.31.6 + Ninja 1.13.2 + vcpkg at C:\vcpkg (runner-images)
+    runs-on: windows-latest           # Sept 2026: VS **18** (2026) Enterprise + MSVC 14.51.36231 + CMake + vcpkg at C:\vcpkg
     env:
-      # vcpkg *source-builds* deps: without a binary cache every push rebuilds them (~10+ min).
+      # vcpkg *source-builds* deps: without a binary cache every push rebuilds them (~10 min).
       # "x-gha" stores vcpkg binaries in the GitHub Actions cache API.
       VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
       VCPKG_DISABLE_METRICS: "1"
+      # Do NOT add "builtin-baseline" to vcpkg.json: the runner's C:\vcpkg clone does not contain an
+      # arbitrary pinned commit, so vcpkg fails with `failed to git show versions/baseline.json`
+      # (measured: run 35011600092 died in 26 s on a pinned baseline that exists locally only).
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@v1                  # vcvars64: puts cl.exe/link.exe on PATH (REQUIRED for -G Ninja)
+      - uses: ilammy/msvc-dev-cmd@v1
 
-      # DIAGNOSTICS FIRST. History: the `Visual Studio 17 2022` generator failed here with
-      # "could not find any instance of Visual Studio" (runs 35007094126, 35009325571) even though the
-      # runner image does ship VS 2022 Enterprise — we could not reproduce that locally by exporting
-      # VSINSTALLDIR/VCINSTALLDIR/Platform/VisualStudioVersion (configure still succeeded), so the cause
-      # is still unproven. This step records the facts instead of guessing.
-      - name: toolchain diagnostics
+      # Keep this step: it is what identified the real generator on the runner after two blind failures.
+      # `Visual Studio 17 2022` does NOT exist here — CMake says "could not find any instance of
+      # Visual Studio" (runs 35007094126, 35009325571, 35011478579). vswhere resolves VS 18.
+      - name: toolchain facts
         shell: pwsh
         run: |
           cmake --version
-          ninja --version
-          cmake --help | Select-String -Pattern "^\s+\*?\s*(Ninja|Visual Studio)"
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) { & $vswhere -all -prerelease -property installationPath } else { "vswhere: NOT FOUND" }
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -all -prerelease -property installationPath
           Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
           where.exe cl.exe
 
-      # GENERATOR: Ninja, deliberately.
-      #  - it needs no Visual Studio *instance* discovery, so the failure above cannot recur here;
-      #  - it is single-config, so CMAKE_BUILD_TYPE actually means something (with a VS generator it is a
-      #    proven no-op — @code-executor measured: the variable does not even appear in CMakeCache.txt);
-      #  - CMake 3.31.6 + Ninja 1.13.2 + vcpkg (VCPKG_INSTALLATION_ROOT) are all preinstalled on the runner;
-      #  - msvc-dev-cmd above provides vcvars, which Ninja+MSVC requires.
-      # Local Windows dev keeps using the VS generator preset (local-vs18) — see CMakePresets.json.
-      - name: configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-               -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+      # Generator = the VS instance that actually exists on the runner (and the same one used locally:
+      # CMakePresets.json local-vs18). Multi-config, so CMAKE_BUILD_TYPE stays out of it by design —
+      # the configuration is selected with `--config Release` / `ctest -C Release` below.
       # Build dir stays IN the repo (build/), never %TEMP%: MSBuild throws MSB8029 and breaks incremental builds.
+      - name: configure
+        run: cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+               -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
       - name: build
-        run: cmake --build build --parallel
+        run: cmake --build build --config Release --parallel
       - name: test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build -C Release --output-on-failure
       - uses: actions/upload-artifact@v4
-        with: { name: airplay-receiver-win64, path: build/**/*.exe }
+        with: { name: airplay-receiver-win64, path: build/Release/*.exe }
