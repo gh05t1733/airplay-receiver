@@ -12,6 +12,21 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ---------------------------------------------------------------------------
+# Generator-agnostic binary output (brief 6.2 / v3.6).
+# Without this, add_subdirectory(src) scatters binaries into per-target, per-config
+# paths - VS multi-config lands the exe in build/src/Release/, Ninja single-config in
+# build/src/ - so ANY fixed upload path is wrong for one generator. Measured cost:
+# two consecutive *successful* CI runs uploaded nothing because of exactly this, and
+# the repo's total artifact count stayed 0 (runs 35013172955, 35013648139).
+# Pinning it here means CI can hardcode build/bin/*.exe for every generator and config.
+# Side benefit: VCPKG_APPLOCAL_DEPS drops spdlog.dll/libcrypto-3-x64.dll next to the
+# exe, which is what the Sprint 4 Inno Setup payload needs.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+foreach(_cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_cfg} "${CMAKE_BINARY_DIR}/bin")
+endforeach()
+
 # Single-config generators (Ninja) need an explicit build type; multi-config (VS) ignore it.
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)

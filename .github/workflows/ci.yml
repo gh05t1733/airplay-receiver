@@ -43,9 +43,14 @@ jobs:
       - name: test
         run: ctest --test-dir build -C Release --output-on-failure
 
-      # Artifact path is BOUND to the generator AND to where the targets live: with the VS generator the
-      # exe lands next to its add_executable() call, i.e. build/src/Release/ (build/tests/Release/ for the
-      # test binary) - measured: run 35013648139 was green but "No files were found with the provided path:
-      # build/Release/*.exe". A green build with an empty artifact is a lie, so glob one level deeper.
+      # Artifact path is generator- AND target-independent because CMakeLists.txt now pins
+      # CMAKE_RUNTIME_OUTPUT_DIRECTORY to build/bin (brief v3.6). A path that tracks either the
+      # generator or the add_subdirectory() layout is how two *successful* runs uploaded nothing
+      # (repo artifact count stayed 0: "No files were found with the provided path").
+      # if-no-files-found: error makes that false-green impossible to repeat - a green run
+      # must ship a real exe or the job fails.
       - uses: actions/upload-artifact@v4
-        with: { name: airplay-receiver-win64, path: build/**/Release/*.exe }
+        with:
+          name: airplay-receiver-win64
+          path: build/bin/*.exe
+          if-no-files-found: error
