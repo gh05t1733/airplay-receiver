@@ -1,5 +1,8 @@
 # arak_common: status, logging, config, i18n loader, ring buffers.
 # Sprint 1 bootstrap carries only the version/status seed; @code-executor fills the rest.
+find_package(spdlog CONFIG REQUIRED)   # CI caught the missing import: target_link_libraries on
+                                       # spdlog::spdlog without find_package fails at generate time
+                                       # ("the target was not found") - run 35011872714.
 add_library(arak_common STATIC
     common/version.cpp
 )
