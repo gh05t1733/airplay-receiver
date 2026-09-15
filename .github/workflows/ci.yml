@@ -20,9 +20,12 @@ jobs:
           where.exe cl.exe
 
       # vcpkg classic mode: install packages before cmake configure.
-      # Manifest mode requires a builtin-baseline that may not exist in the
-      # runner's shallow vcpkg clone, so we use classic mode on CI.
+      # CRITICAL: run from a temp dir (not repo root) so vcpkg doesn't
+      # detect vcpkg.json and enter manifest mode, which needs a baseline
+      # that doesn't exist in the runner's shallow clone.
       - name: install deps
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg" install catch2 spdlog openssl:x64-windows
 
